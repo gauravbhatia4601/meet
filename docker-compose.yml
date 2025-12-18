@@ -11,7 +11,7 @@ services:
     environment:
       - NODE_ENV=production
       - PORT=3001
-      - CORS_ORIGIN=http://localhost:${FRONTEND_PORT:-3000}
+      - CORS_ORIGIN=${CORS_ORIGIN:-http://localhost:3000}
       - MAX_PARTICIPANTS_PER_ROOM=${MAX_PARTICIPANTS_PER_ROOM:-50}
       - ROOM_TIMEOUT_MINUTES=${ROOM_TIMEOUT_MINUTES:-60}
     restart: unless-stopped

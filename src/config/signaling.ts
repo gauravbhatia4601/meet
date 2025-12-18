@@ -4,10 +4,29 @@
 
 const isDevelopment = import.meta.env.MODE === 'development';
 
-// In production Docker, use the signaling server container name or the provided URL
-export const SIGNALING_SERVER_URL = 
-  import.meta.env.VITE_SIGNALING_SERVER_URL || 
-  (isDevelopment ? 'http://localhost:3001' : 'http://server:3001');
+/**
+ * Get the signaling server URL, handling HTTPS/WSS conversion for production
+ */
+function getSignalingServerURL(): string {
+  // Use explicit environment variable if provided
+  let url = import.meta.env.VITE_SIGNALING_SERVER_URL;
+  
+  // Fallback to defaults if not provided
+  if (!url) {
+    url = isDevelopment ? 'http://localhost:3001' : 'http://localhost:3001';
+  }
+  
+  // If the page is loaded over HTTPS, convert HTTP to HTTPS and WS to WSS
+  if (typeof window !== 'undefined' && window.location.protocol === 'https:') {
+    // Convert http:// to https://
+    url = url.replace(/^http:\/\//, 'https://');
+    // Ensure WebSocket will use WSS (Socket.io handles this automatically for https:// URLs)
+  }
+  
+  return url;
+}
+
+export const SIGNALING_SERVER_URL = getSignalingServerURL();
 
 export const SIGNALING_CONFIG = {
   reconnection: true,
