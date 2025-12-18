@@ -1,0 +1,9 @@
+{
+  "name": "Nebula Meet",
+  "description": "A next-generation, aesthetic video conferencing experience featuring real-time media controls, AI-assisted meeting context, and a responsive glassmorphic UI.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone",
+    "display-capture"
+  ]
+}
