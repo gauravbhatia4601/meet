@@ -45,14 +45,19 @@ app.get('/stats', (_req, res) => {
 });
 
 // Initialize Socket.io
+// Note: path should match reverse proxy configuration
+// If reverse proxy routes /socket.io/ to this server, keep path as '/socket.io'
 const io = new Server(httpServer, {
+  path: '/socket.io/',
   cors: {
     origin: corsOrigin,
     methods: ['GET', 'POST'],
     credentials: true
   },
   pingTimeout: 60000,
-  pingInterval: 25000
+  pingInterval: 25000,
+  // Allow connections even if origin doesn't match (for reverse proxy scenarios)
+  allowEIO3: true
 });
 
 // Initialize Room Manager

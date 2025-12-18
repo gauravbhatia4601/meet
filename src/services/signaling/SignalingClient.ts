@@ -72,10 +72,14 @@ export class SignalingClient {
 
       this.socket = io(SIGNALING_SERVER_URL, {
         ...SIGNALING_CONFIG,
+        // Explicitly set path to match server configuration
+        path: '/socket.io/',
         // Force upgrade to WebSocket
         upgrade: true,
         // Add extra debugging
         forceNew: true,
+        // Explicit transports for better reliability
+        transports: ['websocket', 'polling'],
       });
 
       // Connection successful
@@ -88,7 +92,7 @@ export class SignalingClient {
       });
 
       // Connection failed
-      this.socket.on('connect_error', (error) => {
+      this.socket.on('connect_error', (error: Error & { type?: string; description?: unknown; context?: unknown }) => {
         console.error('[SignalingClient] Connection error:', error);
         console.error('[SignalingClient] Error details:', {
           message: error.message,
