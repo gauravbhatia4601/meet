@@ -19,7 +19,7 @@ function getSignalingServerURL(): string {
   
   // Fallback to defaults if not provided
   if (!url) {
-    url = isDevelopment ? 'http://localhost:3001' : 'http://localhost:3001';
+    url = isDevelopment ? 'http://localhost:3001' : 'https://meet.technioz.com';
   }
   
   // Remove trailing slash if present (Socket.io handles paths)

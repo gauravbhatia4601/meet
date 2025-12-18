@@ -36,7 +36,7 @@ services:
       context: .
       dockerfile: Dockerfile.frontend
       args:
-        - VITE_SIGNALING_SERVER_URL=${VITE_SIGNALING_SERVER_URL:-http://localhost:3001}
+        - VITE_SIGNALING_SERVER_URL=https://meet.technioz.com
     container_name: nebula-meet-frontend
     depends_on:
       server:
