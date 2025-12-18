@@ -1,0 +1,46 @@
+version: '3.8'
+
+services:
+  server:
+    build:
+      context: .
+      dockerfile: Dockerfile.server
+    container_name: nebula-meet-server
+    ports:
+      - "${SERVER_PORT:-3001}:3001"
+    environment:
+      - NODE_ENV=production
+      - PORT=3001
+      - CORS_ORIGIN=http://localhost:${FRONTEND_PORT:-3000}
+      - MAX_PARTICIPANTS_PER_ROOM=${MAX_PARTICIPANTS_PER_ROOM:-50}
+      - ROOM_TIMEOUT_MINUTES=${ROOM_TIMEOUT_MINUTES:-60}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3001/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)}).on('error', () => process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - nebula-network
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+      args:
+        - VITE_SIGNALING_SERVER_URL=${VITE_SIGNALING_SERVER_URL:-http://localhost:3001}
+    container_name: nebula-meet-frontend
+    ports:
+      - "${FRONTEND_PORT:-3000}:80"
+    depends_on:
+      server:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - nebula-network
+
+networks:
+  nebula-network:
+    driver: bridge
+

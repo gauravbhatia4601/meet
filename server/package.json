@@ -1,0 +1,30 @@
+{
+  "name": "nebula-meet-server",
+  "version": "1.0.0",
+  "description": "Signaling server for Nebula Meet WebRTC application",
+  "main": "dist/server.js",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "type-check": "tsc --noEmit"
+  },
+  "keywords": ["webrtc", "signaling", "socket.io", "video-call"],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "express": "^4.21.1",
+    "socket.io": "^4.8.1",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.10.5",
+    "@types/cors": "^2.8.17",
+    "tsx": "^4.19.2",
+    "typescript": "^5.8.2"
+  }
+}
+
