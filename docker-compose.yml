@@ -31,14 +31,18 @@ services:
       args:
         - VITE_SIGNALING_SERVER_URL=${VITE_SIGNALING_SERVER_URL:-http://localhost:3001}
     container_name: nebula-meet-frontend
-    ports:
-      - "${FRONTEND_PORT:-3000}:80"
     depends_on:
       server:
         condition: service_healthy
     restart: unless-stopped
     networks:
       - nebula-network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.meet.rule=Host(`meet.technioz.com`)"
+      - "traefik.http.routers.meet.entrypoints=https"
+      - "traefik.http.routers.meet.tls.certresolver=letsencrypt"
+      - "traefik.http.services.meet.loadbalancer.server.port=80"
 
   # Optional: Nginx reverse proxy for SSL termination
   # Uncomment this if you want to use nginx to handle SSL and route traffic
