@@ -68,8 +68,15 @@ export class SignalingClient {
 
       this.connectionState = 'connecting';
       console.log('[SignalingClient] Connecting to', SIGNALING_SERVER_URL);
+      console.log('[SignalingClient] Page protocol:', typeof window !== 'undefined' ? window.location.protocol : 'server-side');
 
-      this.socket = io(SIGNALING_SERVER_URL, SIGNALING_CONFIG);
+      this.socket = io(SIGNALING_SERVER_URL, {
+        ...SIGNALING_CONFIG,
+        // Force upgrade to WebSocket
+        upgrade: true,
+        // Add extra debugging
+        forceNew: true,
+      });
 
       // Connection successful
       this.socket.on('connect', () => {
@@ -83,6 +90,12 @@ export class SignalingClient {
       // Connection failed
       this.socket.on('connect_error', (error) => {
         console.error('[SignalingClient] Connection error:', error);
+        console.error('[SignalingClient] Error details:', {
+          message: error.message,
+          type: error.type,
+          description: error.description,
+          context: error.context
+        });
         this.connectionState = 'error';
         this.callbacks.onError?.(error);
         
@@ -90,6 +103,11 @@ export class SignalingClient {
         if (this.reconnectAttempts === 0) {
           reject(error);
         }
+      });
+
+      // Transport error (specific to WebSocket issues)
+      this.socket.io.on('error', (error) => {
+        console.error('[SignalingClient] IO error:', error);
       });
 
       // Disconnected
