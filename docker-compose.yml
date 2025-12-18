@@ -39,10 +39,11 @@ services:
       - nebula-network
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.meet.rule=Host(`meet.technioz.com`)"
-      - "traefik.http.routers.meet.entrypoints=https"
-      - "traefik.http.routers.meet.tls.certresolver=letsencrypt"
-      - "traefik.http.services.meet.loadbalancer.server.port=80"
+      - "traefik.http.routers.meet-socket.rule=Host(`meet.technioz.com`) && PathPrefix(`/socket.io`)"
+      - "traefik.http.routers.meet-socket.entrypoints=https"
+      - "traefik.http.routers.meet-socket.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.meet-socket.service=meet-socket-svc"
+      - "traefik.http.services.meet-socket-svc.loadbalancer.server.port=3001"
 
   # Optional: Nginx reverse proxy for SSL termination
   # Uncomment this if you want to use nginx to handle SSL and route traffic
