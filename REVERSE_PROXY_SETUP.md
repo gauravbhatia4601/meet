@@ -17,6 +17,113 @@ Your reverse proxy (nginx, Caddy, Traefik, etc.) needs to:
 2. **Handle WebSocket upgrades correctly**
 3. **Pass the correct headers**
 
+---
+
+## 🚀 Coolify Deployment (Recommended)
+
+**If you're using Coolify**, follow these steps:
+
+### Step 1: Deploy Both Services
+
+In Coolify, you should have two separate resources:
+
+1. **Frontend Service** (React/Vite app)
+   - Points to your `docker-compose.yml` frontend service
+   - Domain: `meet.technioz.com`
+   - Port: `80` (internal)
+
+2. **Backend Service** (Node.js/Socket.io server)
+   - Points to your `docker-compose.yml` server service
+   - **Don't assign a domain to this** (or use a subdomain like `api.meet.technioz.com`)
+   - Port: `3001` (internal)
+
+### Step 2: Add Custom Route for WebSocket
+
+In your **Frontend Service** in Coolify:
+
+1. Go to your **Frontend** resource settings
+2. Navigate to **"Advanced"** or **"Custom Nginx Configuration"** (depending on your Coolify version)
+3. Add a custom location block for `/socket.io/`:
+
+**For Coolify with Nginx/Traefik:**
+```nginx
+location /socket.io/ {
+    proxy_pass http://<backend-service-internal-url>:3001;
+    proxy_http_version 1.1;
+    
+    # CRITICAL: WebSocket upgrade headers
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    
+    # Standard proxy headers
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    
+    # WebSocket timeouts
+    proxy_read_timeout 86400;
+    proxy_send_timeout 86400;
+    proxy_connect_timeout 86400;
+    
+    # Disable buffering
+    proxy_buffering off;
+}
+```
+
+**For Coolify with Caddy:**
+Coolify with Caddy typically handles WebSocket automatically, but you may need to add:
+```caddy
+handle /socket.io/* {
+    reverse_proxy <backend-service-internal-url>:3001 {
+        transport http {
+            versions h2c 1.1
+        }
+    }
+}
+```
+
+### Step 3: Find Backend Service Internal URL
+
+In Coolify:
+1. Go to your **Backend Service** resource
+2. Check the **"Internal URL"** or **"Docker Network Name"**
+3. Use this in the `proxy_pass` directive above
+
+Common formats:
+- Docker service name: `server` (if using docker-compose network)
+- Internal IP: `172.x.x.x:3001`
+- Service name: `nebula-meet-server:3001`
+
+### Step 4: Environment Variables
+
+Make sure your **Frontend** service has:
+```
+VITE_SIGNALING_SERVER_URL=https://meet.technioz.com
+```
+
+**Note**: The port should NOT be included since the reverse proxy handles routing.
+
+### Step 5: Redeploy
+
+After adding the custom route:
+1. Save the configuration
+2. Redeploy the Frontend service in Coolify
+3. Test the WebSocket connection
+
+### Alternative: Deploy as Single Docker Compose Resource
+
+If Coolify supports deploying `docker-compose.yml` directly:
+
+1. Deploy your entire `docker-compose.yml` as a single resource
+2. Assign domain `meet.technioz.com` to the compose resource
+3. Coolify should automatically route to both services
+4. You may still need to add the `/socket.io/` custom route if Coolify doesn't detect it automatically
+
+---
+
+## Manual Nginx Configuration (Non-Coolify)
+
 ## Configuration Examples
 
 ### Nginx (Recommended)
