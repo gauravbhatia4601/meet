@@ -58,35 +58,99 @@ const FREE_TURN_SERVERS: ICEServer[] = [
   }
 ];
 
+// Get environment variables (Vite uses import.meta.env)
+const env = import.meta.env as {
+  MODE?: string;
+  VITE_TURN_SERVER_URL?: string;
+  VITE_TURN_USERNAME?: string;
+  VITE_TURN_CREDENTIAL?: string;
+  VITE_USE_FREE_TURN?: string;
+};
+
+const isDevelopment = env.MODE === 'development';
+const useFreeTURN = env.VITE_USE_FREE_TURN !== 'false'; // Default to true unless explicitly disabled
+
+// Custom TURN server from environment variables
+const getCustomTURNServers = (): ICEServer[] => {
+  const turnUrl = env.VITE_TURN_SERVER_URL;
+  const username = env.VITE_TURN_USERNAME;
+  const credential = env.VITE_TURN_CREDENTIAL;
+
+  if (!turnUrl) {
+    return [];
+  }
+
+  // Support multiple URLs (comma-separated) or single URL
+  const urls = turnUrl.split(',').map(url => url.trim()).filter(Boolean);
+  
+  return urls.map(url => {
+    // Ensure URL has turn: or turns: protocol
+    const protocolUrl = url.startsWith('turn:') || url.startsWith('turns:') 
+      ? url 
+      : `turn:${url}`;
+    
+    return {
+      urls: protocolUrl,
+      username: username || '',
+      credential: credential || ''
+    };
+  });
+};
+
 // TODO: Replace with your self-hosted TURN server credentials
 // Example for self-hosted coturn:
 const SELF_HOSTED_TURN_SERVERS: ICEServer[] = [
   {
     urls: 'turn:your-turn-server.com:3478',
-    username: process.env.REACT_APP_TURN_USERNAME || '',
-    credential: process.env.REACT_APP_TURN_CREDENTIAL || ''
+    username: '',
+    credential: ''
   }
 ];
 
 /**
  * Get ICE servers configuration
+ * Priority:
+ * 1. Custom TURN servers from environment variables (VITE_TURN_SERVER_URL)
+ * 2. Free TURN servers (if useFreeTURN is true)
+ * 3. Self-hosted TURN servers (if configured)
  * 
- * @param useFreeTURN - Use free TURN servers (default: true for dev, false for prod)
+ * @param forceUseFreeTURN - Force use of free TURN servers (overrides env)
  */
-export const getICEServers = (useFreeTURN: boolean = true): RTCIceServer[] => {
+export const getICEServers = (forceUseFreeTURN?: boolean): RTCIceServer[] => {
   const stunServers = GOOGLE_STUN_SERVERS;
-  const turnServers = useFreeTURN ? FREE_TURN_SERVERS : SELF_HOSTED_TURN_SERVERS;
+  
+  // Check for custom TURN servers from environment
+  const customTURN = getCustomTURNServers();
+  if (customTURN.length > 0) {
+    console.log('[ICE] Using custom TURN servers from environment:', customTURN.map(s => s.urls));
+    return [...stunServers, ...customTURN] as RTCIceServer[];
+  }
+
+  // Determine which TURN servers to use
+  const shouldUseFree = forceUseFreeTURN !== undefined ? forceUseFreeTURN : useFreeTURN;
+  const turnServers = shouldUseFree ? FREE_TURN_SERVERS : SELF_HOSTED_TURN_SERVERS;
+
+  if (shouldUseFree) {
+    console.log('[ICE] Using free TURN servers (metered.ca)');
+  } else {
+    console.warn('[ICE] Using self-hosted TURN servers (may not be configured)');
+  }
 
   // Combine STUN and TURN servers
-  return [...stunServers, ...turnServers] as RTCIceServer[];
+  const allServers = [...stunServers, ...turnServers] as RTCIceServer[];
+  console.log(`[ICE] Total ICE servers: ${allServers.length} (${stunServers.length} STUN, ${turnServers.length} TURN)`);
+  
+  return allServers;
 };
 
 /**
  * Default ICE configuration for RTCPeerConnection
  */
 export const getRTCConfiguration = (): RTCConfiguration => {
+  const iceServers = getICEServers();
+  
   return {
-    iceServers: getICEServers(),
+    iceServers,
     iceTransportPolicy: 'all', // Allow both direct and relay connections
     iceCandidatePoolSize: 10, // Pre-gather ICE candidates
   };

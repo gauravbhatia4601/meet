@@ -163,6 +163,31 @@ export class PeerConnectionManager {
   }
 
   /**
+   * Restart ICE for a peer connection
+   */
+  private async restartICE(peerId: string): Promise<void> {
+    const peer = this.peers.get(peerId);
+    if (!peer) {
+      console.warn(`[PeerConnectionManager] Cannot restart ICE: Peer ${peerId} not found`);
+      return;
+    }
+
+    console.log(`[PeerConnectionManager] Restarting ICE for ${peerId}`);
+    
+    try {
+      // Create a new offer to restart ICE
+      const offer = await peer.connection.createOffer({ iceRestart: true });
+      await peer.connection.setLocalDescription(offer);
+      
+      // Send new offer via signaling
+      signalingClient.sendWebRTCOffer(peerId, offer);
+      console.log(`[PeerConnectionManager] Sent ICE restart offer to ${peerId}`);
+    } catch (error) {
+      console.error(`[PeerConnectionManager] Failed to restart ICE for ${peerId}:`, error);
+    }
+  }
+
+  /**
    * Remove a peer and cleanup
    */
   removePeer(peerId: string): void {
@@ -363,8 +388,22 @@ export class PeerConnectionManager {
     // ICE candidates
     connection.onicecandidate = (event) => {
       if (event.candidate) {
-        signalingClient.sendIceCandidate(peerId, event.candidate.toJSON());
+        const candidate = event.candidate;
+        // Log candidate type for debugging
+        const candidateType = candidate.type || 'unknown';
+        const candidateProtocol = candidate.protocol || 'unknown';
+        console.log(`[PeerConnectionManager] ${peerId} ICE candidate (${candidateType}/${candidateProtocol}):`, 
+          candidate.candidate?.substring(0, 80));
+        signalingClient.sendIceCandidate(peerId, candidate.toJSON());
+      } else {
+        console.log(`[PeerConnectionManager] ${peerId} ICE candidate gathering complete`);
       }
+    };
+
+    // ICE gathering state
+    connection.onicegatheringstatechange = () => {
+      const state = connection.iceGatheringState;
+      console.log(`[PeerConnectionManager] ${peerId} ICE gathering state: ${state}`);
     };
 
     // Connection state
@@ -376,8 +415,8 @@ export class PeerConnectionManager {
       if (state === 'failed' || state === 'disconnected') {
         // Attempt to restart ICE
         if (state === 'failed') {
-          console.log(`[PeerConnectionManager] Connection failed for ${peerId}, attempting restart...`);
-          // Could implement ICE restart here if needed
+          console.error(`[PeerConnectionManager] Connection failed for ${peerId}, attempting restart...`);
+          this.restartICE(peerId);
         }
       }
     };
@@ -390,7 +429,29 @@ export class PeerConnectionManager {
 
       if (state === 'failed') {
         console.error(`[PeerConnectionManager] ICE connection failed for ${peerId}`);
+        console.error(`[PeerConnectionManager] This usually indicates NAT traversal issues. Check TURN server configuration.`);
+        
+        // Log current ICE candidates for debugging
+        connection.getStats().then(stats => {
+          let candidateCount = 0;
+          stats.forEach(report => {
+            if (report.type === 'local-candidate' || report.type === 'remote-candidate') {
+              candidateCount++;
+              console.log(`[PeerConnectionManager] ${report.type}:`, {
+                candidateType: report.candidateType,
+                protocol: report.protocol,
+                address: report.address
+              });
+            }
+          });
+          console.log(`[PeerConnectionManager] Total ICE candidates collected: ${candidateCount}`);
+        }).catch(err => {
+          console.error(`[PeerConnectionManager] Failed to get stats:`, err);
+        });
+        
         this.callbacks.onError?.(peerId, new Error('ICE connection failed'));
+      } else if (state === 'connected' || state === 'completed') {
+        console.log(`[PeerConnectionManager] ✅ ICE connection established for ${peerId}`);
       }
     };
 
