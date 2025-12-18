@@ -93,7 +93,7 @@ export const useMedia = (options: UseMediaOptions = {}) => {
    */
   const startScreenShare = useCallback(async () => {
     try {
-      const { getDisplayMediaStream } = await import('../../../services/mediaUtils.js');
+      const { getDisplayMediaStream } = await import('../../services/media/mediaUtils.js');
       const screenStream = await getDisplayMediaStream();
       
       // Replace video track with screen share

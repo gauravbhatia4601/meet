@@ -11,7 +11,7 @@
 import { useEffect, useRef, useCallback } from 'react';
 import { useMediaStore } from '../../store/mediaStore.js';
 import { mediaStreamManager } from '../../services/media/MediaStreamManager.js';
-import { getMediaStream, getVideoOnlyStream, getAudioOnlyStream } from '../../../services/mediaUtils.js';
+import { getMediaStream, getVideoOnlyStream, getAudioOnlyStream } from '../../services/media/mediaUtils.js';
 
 interface UseMediaStreamOptions {
   autoStart?: boolean;

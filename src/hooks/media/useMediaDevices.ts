@@ -6,7 +6,7 @@
 
 import { useEffect, useCallback } from 'react';
 import { useMediaStore } from '../../store/mediaStore.js';
-import { getConnectedDevices } from '../../../services/mediaUtils.js';
+import { getConnectedDevices } from '../../services/media/mediaUtils.js';
 
 export const useMediaDevices = () => {
   const devices = useMediaStore(state => state.devices);

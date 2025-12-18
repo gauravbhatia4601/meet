@@ -116,7 +116,7 @@ export const useMediaStore = create<MediaStore>((set, get) => {
         const selectedDevices = get().selectedDevices;
         
         try {
-          const { getAudioOnlyStream } = await import('../../services/mediaUtils.js');
+          const { getAudioOnlyStream } = await import('../services/media/mediaUtils.js');
           console.log('[MediaStore] Getting new audio stream with device:', selectedDevices.audioInput);
           const audioStream = await getAudioOnlyStream(
             selectedDevices.audioInput || undefined
@@ -190,7 +190,7 @@ export const useMediaStore = create<MediaStore>((set, get) => {
         const selectedDevices = get().selectedDevices;
         
         try {
-          const { getVideoOnlyStream } = await import('../../services/mediaUtils.js');
+          const { getVideoOnlyStream } = await import('../services/media/mediaUtils.js');
           console.log('[MediaStore] Getting new video stream with device:', selectedDevices.videoInput);
           const videoStream = await getVideoOnlyStream(
             selectedDevices.videoInput || undefined,
