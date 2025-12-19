@@ -65,10 +65,12 @@ const env = import.meta.env as {
   VITE_TURN_USERNAME?: string;
   VITE_TURN_CREDENTIAL?: string;
   VITE_USE_FREE_TURN?: string;
+  VITE_USE_STUN_ONLY?: string;
 };
 
 const isDevelopment = env.MODE === 'development';
 const useFreeTURN = env.VITE_USE_FREE_TURN !== 'false'; // Default to true unless explicitly disabled
+const useSTUNOnly = env.VITE_USE_STUN_ONLY === 'true'; // Use only STUN servers (no TURN)
 
 // Custom TURN server from environment variables
 const getCustomTURNServers = (): ICEServer[] => {
@@ -110,14 +112,22 @@ const SELF_HOSTED_TURN_SERVERS: ICEServer[] = [
 /**
  * Get ICE servers configuration
  * Priority:
- * 1. Custom TURN servers from environment variables (VITE_TURN_SERVER_URL)
- * 2. Free TURN servers (if useFreeTURN is true)
- * 3. Self-hosted TURN servers (if configured)
+ * 1. STUN-only mode (if VITE_USE_STUN_ONLY=true) - Uses only Google STUN servers
+ * 2. Custom TURN servers from environment variables (VITE_TURN_SERVER_URL)
+ * 3. Free TURN servers (if useFreeTURN is true)
+ * 4. Self-hosted TURN servers (if configured)
  * 
  * @param forceUseFreeTURN - Force use of free TURN servers (overrides env)
  */
 export const getICEServers = (forceUseFreeTURN?: boolean): RTCIceServer[] => {
   const stunServers = GOOGLE_STUN_SERVERS;
+  
+  // STUN-only mode: Use only Google STUN servers (for testing or when TURN isn't available)
+  if (useSTUNOnly) {
+    console.log('[ICE] STUN-only mode: Using only Google STUN servers (no TURN)');
+    console.warn('[ICE] Warning: STUN-only may fail for peers behind symmetric NATs or strict firewalls');
+    return stunServers as RTCIceServer[];
+  }
   
   // Check for custom TURN servers from environment
   const customTURN = getCustomTURNServers();
