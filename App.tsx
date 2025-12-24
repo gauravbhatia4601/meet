@@ -12,9 +12,10 @@ import { signalingClient } from './src/services/signaling/index.js';
 import { peerConnectionManager } from './src/services/webrtc/index.js';
 
 export default function App() {
-  const [view, setView] = useState<AppView>(AppView.LANDING);
+    const [view, setView] = useState<AppView>(AppView.LANDING);
   const [roomCode, setRoomCode] = useState<string>('');
   const [isHost, setIsHost] = useState<boolean>(false);
+  const [connectionError, setConnectionError] = useState<string | null>(null);
 
   // Initialize stores
   const initializeMeeting = useMeetingStore(state => state.initialize);
@@ -22,7 +23,7 @@ export default function App() {
   const setLocalParticipant = useMeetingStore(state => state.setLocalParticipant);
 
   // Initialize stores on mount
-  useEffect(() => {
+    useEffect(() => {
     const cleanupMeeting = initializeMeeting();
     return cleanupMeeting;
   }, [initializeMeeting]);
@@ -41,9 +42,19 @@ export default function App() {
    */
   const handleJoin = async (userName: string) => {
     try {
+      setConnectionError(null); // Clear any previous errors
+      
       // Initialize meeting system (if not already connected)
       if (!signalingClient.isConnected()) {
-        await signalingClient.connect();
+        try {
+          await signalingClient.connect();
+        } catch (error: any) {
+          // Enhanced error handling for connection failures
+          const errorMessage = error.message || 'Failed to connect to signaling server';
+          setConnectionError(errorMessage);
+          console.error('[App] Connection error:', error);
+          throw error;
+        }
       }
       
       // Generate peer ID
@@ -64,17 +75,17 @@ export default function App() {
       if (localStream) {
         console.log('[App] Setting local stream before joining room');
         peerConnectionManager.setLocalStream(localStream);
-      } else {
+        } else {
         console.warn('[App] No local stream available when joining - media may not work until stream is initialized');
       }
       
       // Set local participant
       setLocalParticipant({
-        id: 'local',
+                    id: 'local',
         peerId,
-        name: userName,
+                    name: userName,
         isHost,
-        isLocal: true,
+                    isLocal: true,
         videoEnabled: true,
         audioEnabled: true,
         stream: localStream // Set the actual stream if available
@@ -93,10 +104,15 @@ export default function App() {
         peerConnectionManager.setLocalStream(currentStream);
       }
 
+      // Clear any errors on success
+      setConnectionError(null);
+      
       // Navigate to meeting view
-      setView(AppView.MEETING);
+                setView(AppView.MEETING);
     } catch (error: any) {
       console.error('[App] Failed to join meeting:', error);
+      const errorMessage = error.message || 'Failed to join meeting. Please try again.';
+      setConnectionError(errorMessage);
       throw error;
     }
   };
@@ -107,7 +123,7 @@ export default function App() {
       return <LandingView onNavigate={handleNavigate} />;
 
     case AppView.LOBBY:
-      return (
+        return (
         <LobbyView
           roomCode={roomCode}
           isHost={isHost}
@@ -117,7 +133,7 @@ export default function App() {
       );
 
     case AppView.MEETING:
-      return (
+        return (
         <MeetingView
           roomCode={roomCode}
           onNavigate={handleNavigate}

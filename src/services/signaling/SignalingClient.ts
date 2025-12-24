@@ -70,6 +70,24 @@ export class SignalingClient {
       console.log('[SignalingClient] Connecting to', SIGNALING_SERVER_URL);
       console.log('[SignalingClient] Page protocol:', typeof window !== 'undefined' ? window.location.protocol : 'server-side');
 
+      // Set up connection timeout
+      const connectionTimeout = setTimeout(() => {
+        if (this.connectionState === 'connecting') {
+          const error = new Error(
+            `Failed to connect to signaling server at ${SIGNALING_SERVER_URL}. ` +
+            `Please ensure the server is running. ` +
+            `For local development, run: cd server && npm run dev`
+          );
+          error.name = 'ConnectionTimeout';
+          this.connectionState = 'error';
+          this.callbacks.onError?.(error);
+          if (this.socket) {
+            this.socket.disconnect();
+          }
+          reject(error);
+        }
+      }, SIGNALING_CONFIG.timeout || 20000);
+
       this.socket = io(SIGNALING_SERVER_URL, {
         ...SIGNALING_CONFIG,
         // Explicitly set path to match server configuration
@@ -84,7 +102,8 @@ export class SignalingClient {
 
       // Connection successful
       this.socket.on('connect', () => {
-        console.log('[SignalingClient] Connected to signaling server');
+        clearTimeout(connectionTimeout);
+        console.log('[SignalingClient] ✅ Connected to signaling server');
         this.connectionState = 'connected';
         this.reconnectAttempts = 0;
         this.callbacks.onConnected?.();
@@ -93,29 +112,65 @@ export class SignalingClient {
 
       // Connection failed
       this.socket.on('connect_error', (error: Error & { type?: string; description?: unknown; context?: unknown }) => {
+        const isTransportError = error.type === 'TransportError' || error.message?.includes('websocket error');
+        const isTimeout = error.message?.includes('timeout');
+        
+        // Create user-friendly error message
+        let userMessage = error.message || 'Connection failed';
+        if (isTransportError || isTimeout) {
+          const serverUrl = SIGNALING_SERVER_URL;
+          const isLocalhost = serverUrl.includes('localhost') || serverUrl.includes('127.0.0.1');
+          
+          if (isLocalhost) {
+            userMessage = `Cannot connect to signaling server at ${serverUrl}. ` +
+              `The server may not be running. ` +
+              `\n\nTo start the server:\n` +
+              `  cd server\n` +
+              `  npm install\n` +
+              `  npm run dev`;
+          } else {
+            userMessage = `Cannot connect to signaling server at ${serverUrl}. ` +
+              `Please check:\n` +
+              `  1. Server is running\n` +
+              `  2. Network connectivity\n` +
+              `  3. Firewall settings\n` +
+              `  4. CORS configuration`;
+          }
+        }
+        
         console.error('[SignalingClient] Connection error:', error);
         console.error('[SignalingClient] Error details:', {
           message: error.message,
           type: error.type,
           description: error.description,
-          context: error.context
+          context: error.context,
+          userMessage
         });
+        
+        // Create enhanced error with user message
+        const enhancedError = new Error(userMessage);
+        enhancedError.name = error.name || 'ConnectionError';
+        enhancedError.stack = error.stack;
+        
         this.connectionState = 'error';
-        this.callbacks.onError?.(error);
+        this.callbacks.onError?.(enhancedError);
         
         // Only reject on initial connection attempt
         if (this.reconnectAttempts === 0) {
-          reject(error);
+          clearTimeout(connectionTimeout);
+          reject(enhancedError);
         }
       });
 
       // Transport error (specific to WebSocket issues)
       this.socket.io.on('error', (error) => {
         console.error('[SignalingClient] IO error:', error);
+        // Don't reject here - let connect_error handle it
       });
 
       // Disconnected
       this.socket.on('disconnect', (reason) => {
+        clearTimeout(connectionTimeout);
         console.log('[SignalingClient] Disconnected:', reason);
         this.connectionState = 'disconnected';
         this.callbacks.onDisconnected?.();
@@ -125,6 +180,21 @@ export class SignalingClient {
       this.socket.io.on('reconnect_attempt', (attempt) => {
         this.reconnectAttempts = attempt;
         console.log(`[SignalingClient] Reconnection attempt ${attempt}`);
+        
+        // Stop retrying after max attempts
+        if (attempt >= (SIGNALING_CONFIG.reconnectionAttempts || 5)) {
+          console.error('[SignalingClient] Max reconnection attempts reached. Stopping retries.');
+          if (this.socket) {
+            this.socket.disconnect();
+          }
+          const error = new Error(
+            `Failed to connect after ${attempt} attempts. ` +
+            `Please check if the signaling server is running at ${SIGNALING_SERVER_URL}`
+          );
+          error.name = 'MaxRetriesExceeded';
+          this.connectionState = 'error';
+          this.callbacks.onError?.(error);
+        }
       });
 
       // Setup event listeners
