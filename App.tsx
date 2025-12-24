@@ -55,8 +55,18 @@ export default function App() {
       // Set room in store
       setRoom(roomCode, isHost, peerId);
       
+      // CRITICAL: Set local stream BEFORE joining room to ensure tracks are added to offers
       // Get current stream from media store
       const localStream = useMediaStore.getState().localStream;
+      
+      // Set local stream in peer connection manager FIRST (before joining)
+      // This ensures tracks are included when offers are created
+      if (localStream) {
+        console.log('[App] Setting local stream before joining room');
+        peerConnectionManager.setLocalStream(localStream);
+      } else {
+        console.warn('[App] No local stream available when joining - media may not work until stream is initialized');
+      }
       
       // Set local participant
       setLocalParticipant({
@@ -76,9 +86,10 @@ export default function App() {
       // Wait a bit for connection to establish
       await new Promise(resolve => setTimeout(resolve, 100));
 
-      // Set local stream in peer connection manager (get fresh in case it was updated)
+      // Update stream again in case it was initialized/updated during join
       const currentStream = useMediaStore.getState().localStream;
-      if (currentStream) {
+      if (currentStream && currentStream !== localStream) {
+        console.log('[App] Stream updated after join, updating peer connections');
         peerConnectionManager.setLocalStream(currentStream);
       }
 

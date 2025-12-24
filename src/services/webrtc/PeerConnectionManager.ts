@@ -68,6 +68,9 @@ export class PeerConnectionManager {
 
   /**
    * Set local media stream
+   * 
+   * CRITICAL: Tracks must be added BEFORE setRemoteDescription() is called.
+   * If remote description is already set, we use addTransceiver() or renegotiate.
    */
   setLocalStream(stream: MediaStream | null): void {
     this.localStream = stream;
@@ -75,20 +78,78 @@ export class PeerConnectionManager {
     // Add tracks to all existing peer connections
     if (stream) {
       stream.getTracks().forEach(track => {
-        this.peers.forEach(peer => {
+        this.peers.forEach((peer) => {
           const sender = peer.connection.getSenders().find(s => {
             return s.track?.kind === track.kind;
           });
 
           if (sender) {
+            // Replace existing track
             sender.replaceTrack(track).catch(err => {
               console.error(`[PeerConnectionManager] Failed to replace track for ${peer.peerId}:`, err);
             });
           } else {
-            peer.connection.addTrack(track, stream);
+            // No sender exists - need to add track
+            const remoteDescription = peer.connection.remoteDescription;
+            const localDescription = peer.connection.localDescription;
+            
+            if (!remoteDescription && !localDescription) {
+              // Safe to use addTrack() - no descriptions set yet
+              console.log(`[PeerConnectionManager] Adding ${track.kind} track to ${peer.peerId} (no descriptions set)`);
+              try {
+                peer.connection.addTrack(track, stream);
+              } catch (err) {
+                console.error(`[PeerConnectionManager] Failed to add track to ${peer.peerId}:`, err);
+              }
+            } else {
+              // Descriptions already set - must use addTransceiver() or renegotiate
+              console.log(`[PeerConnectionManager] Adding ${track.kind} track to ${peer.peerId} via transceiver (descriptions already set)`);
+              
+              try {
+                // Use addTransceiver() which works even after descriptions are set
+                const transceiver = peer.connection.addTransceiver(track, {
+                  direction: 'sendrecv',
+                  streams: [stream]
+                });
+                
+                // If we're the initiator and have local description (offer), create new offer to renegotiate
+                if (localDescription && peer.connection.localDescription?.type === 'offer') {
+                  // Renegotiate asynchronously (don't await - fire and forget)
+                  this.renegotiateForNewTrack(peer.peerId).catch(err => {
+                    console.error(`[PeerConnectionManager] Failed to renegotiate for ${peer.peerId}:`, err);
+                  });
+                }
+                // If we're the responder and have local description (answer), we need to wait for new offer
+                // The transceiver is added, but we'll need to renegotiate when we receive next offer
+              } catch (err) {
+                console.error(`[PeerConnectionManager] Failed to add transceiver for ${peer.peerId}:`, err);
+              }
+            }
           }
         });
       });
+    }
+  }
+
+  /**
+   * Renegotiate connection to include newly added track
+   */
+  private async renegotiateForNewTrack(peerId: string): Promise<void> {
+    const peer = this.peers.get(peerId);
+    if (!peer) {
+      console.error(`[PeerConnectionManager] Cannot renegotiate: Peer ${peerId} not found`);
+      return;
+    }
+
+    try {
+      console.log(`[PeerConnectionManager] Renegotiating connection for ${peerId} to include new track`);
+      const offer = await peer.connection.createOffer();
+      await peer.connection.setLocalDescription(offer);
+      signalingClient.sendWebRTCOffer(peerId, offer);
+      console.log(`[PeerConnectionManager] Sent renegotiation offer to ${peerId}`);
+    } catch (err) {
+      console.error(`[PeerConnectionManager] Failed to renegotiate for ${peerId}:`, err);
+      throw err;
     }
   }
 
