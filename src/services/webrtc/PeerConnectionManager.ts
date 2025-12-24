@@ -472,11 +472,41 @@ export class PeerConnectionManager {
 
   /**
    * Create offer and send via signaling
+   * 
+   * CRITICAL: Ensures stream tracks are added before creating offer.
+   * This is essential for media streaming to work.
    */
   private async createOffer(remotePeerId: string): Promise<void> {
     const peer = this.peers.get(remotePeerId);
     if (!peer) {
       throw new Error(`Peer ${remotePeerId} not found`);
+    }
+
+    // CRITICAL: Ensure stream is available before creating offer
+    // Check if connection has tracks - if not, add them from MediaStreamManager
+    const senders = peer.connection.getSenders();
+    const hasAudioTrack = senders.some(s => s.track?.kind === 'audio');
+    const hasVideoTrack = senders.some(s => s.track?.kind === 'video');
+    
+    if (!hasAudioTrack || !hasVideoTrack) {
+      console.log(`[PeerConnectionManager] Missing tracks before offer to ${remotePeerId}, ensuring stream...`);
+      const stream = this.localStream || mediaStreamManager.getStream();
+      
+      if (stream) {
+        stream.getTracks().forEach(track => {
+          const hasTrack = senders.some(s => s.track?.kind === track.kind);
+          if (!hasTrack) {
+            try {
+              peer.connection.addTrack(track, stream);
+              console.log(`[PeerConnectionManager] Added ${track.kind} track to ${remotePeerId} before creating offer`);
+            } catch (err) {
+              console.error(`[PeerConnectionManager] Failed to add ${track.kind} track before offer:`, err);
+            }
+          }
+        });
+      } else {
+        console.warn(`[PeerConnectionManager] ⚠️ No stream available when creating offer to ${remotePeerId}. Offer will be created without tracks.`);
+      }
     }
 
     try {
@@ -487,11 +517,16 @@ export class PeerConnectionManager {
 
       await peer.connection.setLocalDescription(offer);
 
+      // Log offer details for debugging
+      const offerHasAudio = offer.sdp?.includes('m=audio');
+      const offerHasVideo = offer.sdp?.includes('m=video');
+      console.log(`[PeerConnectionManager] Created offer for ${remotePeerId}: audio=${offerHasAudio}, video=${offerHasVideo}`);
+
       // Send via signaling
       signalingClient.sendWebRTCOffer(remotePeerId, offer);
-      console.log(`[PeerConnectionManager] Sent offer to ${remotePeerId}`);
+      console.log(`[PeerConnectionManager] ✅ Sent offer to ${remotePeerId}`);
     } catch (error) {
-      console.error(`[PeerConnectionManager] Failed to create offer for ${remotePeerId}:`, error);
+      console.error(`[PeerConnectionManager] ❌ Failed to create offer for ${remotePeerId}:`, error);
       this.callbacks.onError?.(remotePeerId, error as Error);
     }
   }
