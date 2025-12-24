@@ -5,7 +5,7 @@
  */
 
 import React, { useState, useMemo } from 'react';
-import { Clock, Users as UsersIcon } from 'lucide-react';
+import { Clock, Users as UsersIcon, Copy, Check, ExternalLink } from 'lucide-react';
 import { ParticipantTile, ControlBar, ChatPanel, ParticipantsList, InfoPanel } from '../../components/meeting/index.js';
 import { useMeeting, useMedia, useParticipants, useChat } from '../../hooks/index.js';
 import { useMeetingStore } from '../../store/index.js';
@@ -30,6 +30,26 @@ export const MeetingView: React.FC<MeetingViewProps> = ({ roomCode, onNavigate }
   const [isParticipantsOpen, setIsParticipantsOpen] = useState(false);
   const [isInfoOpen, setIsInfoOpen] = useState(false);
   const [elapsedTime, setElapsedTime] = useState(0);
+  const [copied, setCopied] = useState(false);
+  
+  // Generate meeting URL
+  const meetingUrl = `${window.location.origin}${window.location.pathname}?room=${roomCode}`;
+  
+  // Handle copy meeting link
+  const handleCopyLink = async () => {
+    try {
+      await navigator.clipboard.writeText(meetingUrl);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      console.error('Failed to copy:', err);
+    }
+  };
+  
+  // Handle click to open link
+  const handleOpenLink = () => {
+    window.open(meetingUrl, '_blank');
+  };
   
   // Determine which sidebar is currently open
   const openSidebar = useMemo(() => {
@@ -308,7 +328,7 @@ export const MeetingView: React.FC<MeetingViewProps> = ({ roomCode, onNavigate }
           className="w-full"
         />
         
-        {/* Left: Time and Room Code */}
+        {/* Left: Time, Participants, and Meeting Link */}
         <div className="absolute left-4 bottom-4 flex items-center gap-4">
           <div className="flex items-center gap-2 text-white">
             <Clock className="w-4 h-4" />
@@ -320,8 +340,33 @@ export const MeetingView: React.FC<MeetingViewProps> = ({ roomCode, onNavigate }
             <span className="text-sm font-medium">{participantCount}</span>
           </div>
           <div className="h-4 w-px bg-white/20" />
-          <div className="text-white text-sm font-mono">
-            {roomCode}
+          {/* Meeting Link - Clickable */}
+          <div className="flex items-center gap-2 group">
+            <a
+              href={meetingUrl}
+              onClick={(e) => {
+                e.preventDefault();
+                handleOpenLink();
+              }}
+              className="flex items-center gap-2 text-white hover:text-blue-400 transition-colors cursor-pointer"
+              title="Click to open meeting link"
+            >
+              <span className="text-sm font-mono max-w-[200px] md:max-w-[300px] truncate">
+                {meetingUrl}
+              </span>
+              <ExternalLink className="w-3.5 h-3.5 opacity-0 group-hover:opacity-100 transition-opacity" />
+            </a>
+            <button
+              onClick={handleCopyLink}
+              className="p-1.5 rounded hover:bg-white/10 transition-colors text-white hover:text-blue-400"
+              title="Copy meeting link"
+            >
+              {copied ? (
+                <Check className="w-3.5 h-3.5 text-green-400" />
+              ) : (
+                <Copy className="w-3.5 h-3.5" />
+              )}
+            </button>
           </div>
         </div>
       </div>
