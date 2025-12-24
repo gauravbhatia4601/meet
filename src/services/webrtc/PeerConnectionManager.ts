@@ -533,6 +533,9 @@ export class PeerConnectionManager {
 
   /**
    * Handle incoming offer
+   * 
+   * CRITICAL: When receiving an offer (e.g., when rejoining), ensure stream
+   * is available BEFORE creating answer so tracks are included.
    */
   private async handleOffer(data: WebRTCOfferData): Promise<void> {
     const { from, offer } = data;
@@ -544,6 +547,39 @@ export class PeerConnectionManager {
     if (!peer) {
       await this.addPeer(from, false);
       peer = this.peers.get(from)!;
+    }
+
+    // CRITICAL: Ensure stream is available before creating answer
+    // This is especially important when rejoining - stream must be ready
+    if (!this.localStream) {
+      let currentStream = mediaStreamManager.getStream();
+      
+      // If no stream in MediaStreamManager, try media store
+      if (!currentStream) {
+        try {
+          const { useMediaStore } = await import('../../store/mediaStore.js');
+          const mediaState = useMediaStore.getState();
+          currentStream = mediaState.localStream;
+          if (currentStream) {
+            console.log(`[PeerConnectionManager] Got stream from media store when handling offer from ${from}`);
+            mediaStreamManager.setStream(currentStream);
+          }
+        } catch (err) {
+          console.warn(`[PeerConnectionManager] Could not access media store:`, err);
+        }
+      }
+      
+      if (currentStream) {
+        console.log(`[PeerConnectionManager] Setting stream before creating answer for ${from}`);
+        this.localStream = currentStream;
+        // Ensure tracks are added to this connection before creating answer
+        this.ensureStreamInConnection(peer.connection);
+      } else {
+        console.warn(`[PeerConnectionManager] ⚠️ No stream available when handling offer from ${from}. Answer will be created without tracks. Stream will be added automatically when available.`);
+      }
+    } else {
+      // Stream exists, ensure it's in the connection
+      this.ensureStreamInConnection(peer.connection);
     }
 
     try {
@@ -559,7 +595,7 @@ export class PeerConnectionManager {
 
       // Send via signaling
       signalingClient.sendWebRTCAnswer(from, answer);
-      console.log(`[PeerConnectionManager] Sent answer to ${from}`);
+      console.log(`[PeerConnectionManager] ✅ Sent answer to ${from} (stream available: ${!!this.localStream})`);
     } catch (error) {
       console.error(`[PeerConnectionManager] Failed to handle offer from ${from}:`, error);
       this.callbacks.onError?.(from, error as Error);
