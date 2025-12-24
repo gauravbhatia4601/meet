@@ -66,17 +66,32 @@ export default function App() {
       // Set room in store
       setRoom(roomCode, isHost, peerId);
       
-      // CRITICAL: Set local stream BEFORE joining room to ensure tracks are added to offers
-      // Get current stream from media store
-      const localStream = useMediaStore.getState().localStream;
+      // CRITICAL: Ensure stream exists BEFORE joining room
+      // This is especially important when rejoining - stream must be available
+      // Get stream from MediaStreamManager (centralized source)
+      const { mediaStreamManager } = await import('./src/services/media/MediaStreamManager.js');
+      let localStream = mediaStreamManager.getStream();
       
-      // Set local stream in peer connection manager FIRST (before joining)
-      // This ensures tracks are included when offers are created
-      if (localStream) {
-        console.log('[App] Setting local stream before joining room');
+      // If no stream in MediaStreamManager, check media store
+      if (!localStream) {
+        const { useMediaStore } = await import('./src/store/mediaStore.js');
+        localStream = useMediaStore.getState().localStream;
+        if (localStream) {
+          // Set in MediaStreamManager so PeerConnectionManager can access it
+          mediaStreamManager.setStream(localStream);
+          console.log('[App] Stream found in store, set in MediaStreamManager');
+        }
+      }
+      
+      // If still no stream, log warning (MeetingView will initialize it)
+      if (!localStream) {
+        console.warn('[App] No stream available when joining. MeetingView will initialize stream automatically.');
+      } else {
+        console.log('[App] Stream available with', localStream.getTracks().length, 'tracks');
+        // Set local stream in peer connection manager FIRST (before joining)
+        // This ensures tracks are included when offers are created
+        // Note: PeerConnectionManager also subscribes to MediaStreamManager, so this is redundant but safe
         peerConnectionManager.setLocalStream(localStream);
-        } else {
-        console.warn('[App] No local stream available when joining - media may not work until stream is initialized');
       }
       
       // Set local participant

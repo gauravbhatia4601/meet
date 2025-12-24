@@ -51,11 +51,28 @@ export class PeerConnectionManager {
    * CRITICAL: This subscribes to MediaStreamManager to automatically
    * get stream updates. Media streaming is now completely independent
    * of component lifecycle.
+   * 
+   * Can be called multiple times - if peerId changes, it will reinitialize.
    */
   initialize(localPeerId: string): void {
-    if (this.isInitialized) {
-      console.warn('[PeerConnectionManager] Already initialized');
+    // If already initialized with same peerId, do nothing
+    if (this.isInitialized && this.localPeerId === localPeerId) {
+      console.log(`[PeerConnectionManager] Already initialized with peerId: ${localPeerId}`);
       return;
+    }
+
+    // If peerId changed (user rejoined), clean up old state
+    if (this.isInitialized && this.localPeerId !== localPeerId) {
+      console.log(`[PeerConnectionManager] PeerId changed from ${this.localPeerId} to ${localPeerId}, reinitializing...`);
+      // Clean up old subscription
+      if (this.streamUnsubscribe) {
+        this.streamUnsubscribe();
+        this.streamUnsubscribe = null;
+      }
+      // Remove all old peer connections (they're for the old peerId)
+      this.removeAllPeers();
+      // Reset initialization flag
+      this.isInitialized = false;
     }
 
     this.localPeerId = localPeerId;
@@ -71,10 +88,13 @@ export class PeerConnectionManager {
 
     // CRITICAL: Subscribe to MediaStreamManager for automatic stream updates
     // This makes media streaming completely independent of component lifecycle
-    this.streamUnsubscribe = mediaStreamManager.onStreamChange((stream) => {
-      console.log('[PeerConnectionManager] Stream changed, updating all peer connections');
-      this.setLocalStream(stream);
-    });
+    // Only subscribe if not already subscribed (preserve subscription across reinitializations)
+    if (!this.streamUnsubscribe) {
+      this.streamUnsubscribe = mediaStreamManager.onStreamChange((stream) => {
+        console.log('[PeerConnectionManager] Stream changed, updating all peer connections');
+        this.setLocalStream(stream);
+      });
+    }
 
     // Get current stream immediately
     const currentStream = mediaStreamManager.getStream();
@@ -258,20 +278,37 @@ export class PeerConnectionManager {
 
     // CRITICAL: Automatically ensure stream exists and add tracks
     // Get current stream from MediaStreamManager (independent of component state)
-    const currentStream = mediaStreamManager.getStream();
+    let currentStream = mediaStreamManager.getStream();
+    
+    // If no stream in MediaStreamManager, try to get from media store as fallback
+    if (!currentStream) {
+      try {
+        const { useMediaStore } = await import('../../store/mediaStore.js');
+        const mediaState = useMediaStore.getState();
+        currentStream = mediaState.localStream;
+        if (currentStream) {
+          console.log(`[PeerConnectionManager] Got stream from media store for ${remotePeerId}`);
+          // Set it in MediaStreamManager so it's available for future peers
+          mediaStreamManager.setStream(currentStream);
+        }
+      } catch (err) {
+        console.warn(`[PeerConnectionManager] Could not access media store:`, err);
+      }
+    }
+    
     if (currentStream) {
-      console.log(`[PeerConnectionManager] Adding tracks from MediaStreamManager to ${remotePeerId}`);
+      console.log(`[PeerConnectionManager] Adding ${currentStream.getTracks().length} tracks from MediaStreamManager to ${remotePeerId}`);
       this.localStream = currentStream;
       currentStream.getTracks().forEach(track => {
         try {
           connection.addTrack(track, currentStream);
-          console.log(`[PeerConnectionManager] Added ${track.kind} track to ${remotePeerId}`);
+          console.log(`[PeerConnectionManager] ✅ Added ${track.kind} track (${track.id}) to ${remotePeerId}`);
         } catch (err) {
-          console.error(`[PeerConnectionManager] Failed to add ${track.kind} track:`, err);
+          console.error(`[PeerConnectionManager] ❌ Failed to add ${track.kind} track to ${remotePeerId}:`, err);
         }
       });
     } else {
-      console.warn(`[PeerConnectionManager] No stream available when adding peer ${remotePeerId}. Stream will be added automatically when available.`);
+      console.warn(`[PeerConnectionManager] ⚠️ No stream available when adding peer ${remotePeerId}. Stream will be added automatically when available via MediaStreamManager subscription.`);
       // Stream will be added automatically via MediaStreamManager subscription
     }
 
@@ -304,6 +341,23 @@ export class PeerConnectionManager {
 
     // If initiator, create and send offer
     if (isInitiator) {
+      // CRITICAL: Ensure stream is available before creating offer
+      // Double-check stream exists (it might have been set after connection creation)
+      if (!this.localStream) {
+        const stream = mediaStreamManager.getStream();
+        if (stream) {
+          console.log(`[PeerConnectionManager] Stream became available, adding tracks to ${remotePeerId} before creating offer`);
+          this.localStream = stream;
+          stream.getTracks().forEach(track => {
+            try {
+              connection.addTrack(track, stream);
+              console.log(`[PeerConnectionManager] Added ${track.kind} track to ${remotePeerId} before offer`);
+            } catch (err) {
+              console.error(`[PeerConnectionManager] Failed to add ${track.kind} track:`, err);
+            }
+          });
+        }
+      }
       await this.createOffer(remotePeerId);
     }
 
@@ -658,4 +712,3 @@ export class PeerConnectionManager {
 
 // Export singleton instance
 export const peerConnectionManager = new PeerConnectionManager();
-
