@@ -14,6 +14,7 @@
 
 import { getRTCConfiguration } from '../../config/iceServers.js';
 import { signalingClient } from '../signaling/index.js';
+import { mediaStreamManager } from '../media/MediaStreamManager.js';
 import type {
   WebRTCOfferData,
   WebRTCAnswerData,
@@ -42,9 +43,14 @@ export class PeerConnectionManager {
   private localPeerId: string = '';
   private callbacks: PeerConnectionCallbacks = {};
   private isInitialized = false;
+  private streamUnsubscribe: (() => void) | null = null;
 
   /**
    * Initialize the manager
+   * 
+   * CRITICAL: This subscribes to MediaStreamManager to automatically
+   * get stream updates. Media streaming is now completely independent
+   * of component lifecycle.
    */
   initialize(localPeerId: string): void {
     if (this.isInitialized) {
@@ -63,71 +69,134 @@ export class PeerConnectionManager {
       onParticipantLeft: (data) => this.removePeer(data.peerId)
     });
 
+    // CRITICAL: Subscribe to MediaStreamManager for automatic stream updates
+    // This makes media streaming completely independent of component lifecycle
+    this.streamUnsubscribe = mediaStreamManager.onStreamChange((stream) => {
+      console.log('[PeerConnectionManager] Stream changed, updating all peer connections');
+      this.setLocalStream(stream);
+    });
+
+    // Get current stream immediately
+    const currentStream = mediaStreamManager.getStream();
+    if (currentStream) {
+      this.setLocalStream(currentStream);
+    }
+
     console.log('[PeerConnectionManager] Initialized for peer:', localPeerId);
+    console.log('[PeerConnectionManager] Subscribed to MediaStreamManager for automatic stream updates');
   }
 
   /**
    * Set local media stream
    * 
-   * CRITICAL: Tracks must be added BEFORE setRemoteDescription() is called.
+   * CRITICAL: Automatically adds tracks to ALL existing peer connections.
+   * This is called automatically when MediaStreamManager stream changes.
+   * Tracks must be added BEFORE setRemoteDescription() is called.
    * If remote description is already set, we use addTransceiver() or renegotiate.
    */
   setLocalStream(stream: MediaStream | null): void {
+    const streamChanged = this.localStream !== stream;
     this.localStream = stream;
 
-    // Add tracks to all existing peer connections
-    if (stream) {
-      stream.getTracks().forEach(track => {
-        this.peers.forEach((peer) => {
-          const sender = peer.connection.getSenders().find(s => {
-            return s.track?.kind === track.kind;
-          });
+    if (!stream) {
+      console.log('[PeerConnectionManager] Stream cleared');
+      return;
+    }
 
-          if (sender) {
-            // Replace existing track
-            sender.replaceTrack(track).catch(err => {
-              console.error(`[PeerConnectionManager] Failed to replace track for ${peer.peerId}:`, err);
-            });
-          } else {
-            // No sender exists - need to add track
-            const remoteDescription = peer.connection.remoteDescription;
-            const localDescription = peer.connection.localDescription;
-            
-            if (!remoteDescription && !localDescription) {
-              // Safe to use addTrack() - no descriptions set yet
-              console.log(`[PeerConnectionManager] Adding ${track.kind} track to ${peer.peerId} (no descriptions set)`);
-              try {
-                peer.connection.addTrack(track, stream);
-              } catch (err) {
-                console.error(`[PeerConnectionManager] Failed to add track to ${peer.peerId}:`, err);
-              }
-            } else {
-              // Descriptions already set - must use addTransceiver() or renegotiate
-              console.log(`[PeerConnectionManager] Adding ${track.kind} track to ${peer.peerId} via transceiver (descriptions already set)`);
-              
-              try {
-                // Use addTransceiver() which works even after descriptions are set
-                const transceiver = peer.connection.addTransceiver(track, {
-                  direction: 'sendrecv',
-                  streams: [stream]
-                });
-                
-                // If we're the initiator and have local description (offer), create new offer to renegotiate
-                if (localDescription && peer.connection.localDescription?.type === 'offer') {
-                  // Renegotiate asynchronously (don't await - fire and forget)
-                  this.renegotiateForNewTrack(peer.peerId).catch(err => {
-                    console.error(`[PeerConnectionManager] Failed to renegotiate for ${peer.peerId}:`, err);
-                  });
-                }
-                // If we're the responder and have local description (answer), we need to wait for new offer
-                // The transceiver is added, but we'll need to renegotiate when we receive next offer
-              } catch (err) {
-                console.error(`[PeerConnectionManager] Failed to add transceiver for ${peer.peerId}:`, err);
-              }
-            }
-          }
-        });
+    console.log(`[PeerConnectionManager] Setting local stream, ${stream.getTracks().length} tracks, ${this.peers.size} peers`);
+
+    // Add tracks to all existing peer connections
+    stream.getTracks().forEach(track => {
+      this.peers.forEach((peer) => {
+        this.addTrackToConnection(peer.connection, peer.peerId, track, stream);
       });
+    });
+  }
+
+  /**
+   * Ensure stream tracks are added to a connection
+   * Helper method to add tracks safely
+   */
+  private ensureStreamInConnection(connection: RTCPeerConnection): void {
+    if (!this.localStream) {
+      const currentStream = mediaStreamManager.getStream();
+      if (currentStream) {
+        this.localStream = currentStream;
+      } else {
+        return;
+      }
+    }
+
+    this.localStream.getTracks().forEach(track => {
+      const sender = connection.getSenders().find(s => s.track?.kind === track.kind);
+      if (!sender) {
+        // No sender exists, add track
+        try {
+          connection.addTrack(track, this.localStream!);
+          console.log(`[PeerConnectionManager] Added ${track.kind} track to connection`);
+        } catch (err) {
+          console.error(`[PeerConnectionManager] Failed to add ${track.kind} track:`, err);
+        }
+      }
+    });
+  }
+
+  /**
+   * Add a track to a connection, handling all edge cases
+   */
+  private addTrackToConnection(
+    connection: RTCPeerConnection,
+    peerId: string,
+    track: MediaStreamTrack,
+    stream: MediaStream
+  ): void {
+    const sender = connection.getSenders().find(s => {
+      return s.track?.kind === track.kind;
+    });
+
+    if (sender) {
+      // Replace existing track
+      sender.replaceTrack(track).catch(err => {
+        console.error(`[PeerConnectionManager] Failed to replace track for ${peerId}:`, err);
+      });
+      return;
+    }
+
+    // No sender exists - need to add track
+    const remoteDescription = connection.remoteDescription;
+    const localDescription = connection.localDescription;
+    
+    if (!remoteDescription && !localDescription) {
+      // Safe to use addTrack() - no descriptions set yet
+      console.log(`[PeerConnectionManager] Adding ${track.kind} track to ${peerId} (no descriptions set)`);
+      try {
+        connection.addTrack(track, stream);
+      } catch (err) {
+        console.error(`[PeerConnectionManager] Failed to add track to ${peerId}:`, err);
+      }
+    } else {
+      // Descriptions already set - must use addTransceiver() or renegotiate
+      console.log(`[PeerConnectionManager] Adding ${track.kind} track to ${peerId} via transceiver (descriptions already set)`);
+      
+      try {
+        // Use addTransceiver() which works even after descriptions are set
+        const transceiver = connection.addTransceiver(track, {
+          direction: 'sendrecv',
+          streams: [stream]
+        });
+        
+        // If we're the initiator and have local description (offer), create new offer to renegotiate
+        if (localDescription && connection.localDescription?.type === 'offer') {
+          // Renegotiate asynchronously (don't await - fire and forget)
+          this.renegotiateForNewTrack(peerId).catch(err => {
+            console.error(`[PeerConnectionManager] Failed to renegotiate for ${peerId}:`, err);
+          });
+        }
+        // If we're the responder and have local description (answer), we need to wait for new offer
+        // The transceiver is added, but we'll need to renegotiate when we receive next offer
+      } catch (err) {
+        console.error(`[PeerConnectionManager] Failed to add transceiver for ${peerId}:`, err);
+      }
     }
   }
 
@@ -162,6 +231,9 @@ export class PeerConnectionManager {
 
   /**
    * Add a new peer and create connection
+   * 
+   * CRITICAL: Automatically ensures stream exists and adds tracks.
+   * Media streaming is now completely independent and automatic.
    */
   async addPeer(remotePeerId: string, isInitiator: boolean = false): Promise<RTCPeerConnection> {
     // Don't connect to self
@@ -172,7 +244,10 @@ export class PeerConnectionManager {
     // Check if peer already exists
     if (this.peers.has(remotePeerId)) {
       console.log(`[PeerConnectionManager] Peer ${remotePeerId} already exists`);
-      return this.peers.get(remotePeerId)!.connection;
+      const existingPeer = this.peers.get(remotePeerId)!;
+      // Ensure stream is still added to existing connection
+      this.ensureStreamInConnection(existingPeer.connection);
+      return existingPeer.connection;
     }
 
     console.log(`[PeerConnectionManager] Adding peer: ${remotePeerId} (initiator: ${isInitiator})`);
@@ -181,11 +256,23 @@ export class PeerConnectionManager {
     const config = getRTCConfiguration();
     const connection = new RTCPeerConnection(config);
 
-    // Add local stream tracks
-    if (this.localStream) {
-      this.localStream.getTracks().forEach(track => {
-        connection.addTrack(track, this.localStream!);
+    // CRITICAL: Automatically ensure stream exists and add tracks
+    // Get current stream from MediaStreamManager (independent of component state)
+    const currentStream = mediaStreamManager.getStream();
+    if (currentStream) {
+      console.log(`[PeerConnectionManager] Adding tracks from MediaStreamManager to ${remotePeerId}`);
+      this.localStream = currentStream;
+      currentStream.getTracks().forEach(track => {
+        try {
+          connection.addTrack(track, currentStream);
+          console.log(`[PeerConnectionManager] Added ${track.kind} track to ${remotePeerId}`);
+        } catch (err) {
+          console.error(`[PeerConnectionManager] Failed to add ${track.kind} track:`, err);
+        }
       });
+    } else {
+      console.warn(`[PeerConnectionManager] No stream available when adding peer ${remotePeerId}. Stream will be added automatically when available.`);
+      // Stream will be added automatically via MediaStreamManager subscription
     }
 
     // Set up event handlers
@@ -560,6 +647,12 @@ export class PeerConnectionManager {
     this.localPeerId = '';
     this.isInitialized = false;
     this.callbacks = {};
+    
+    // Unsubscribe from MediaStreamManager
+    if (this.streamUnsubscribe) {
+      this.streamUnsubscribe();
+      this.streamUnsubscribe = null;
+    }
   }
 }
 

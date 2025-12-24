@@ -14,6 +14,7 @@ import { create } from 'zustand';
 import type { Participant, ChatMessage, MeetingDetails } from '../types/index.js';
 import { signalingClient } from '../services/signaling/index.js';
 import { peerConnectionManager } from '../services/webrtc/index.js';
+import { mediaStreamManager } from '../services/media/MediaStreamManager.js';
 import type {
   RoomJoinedData,
   ParticipantJoinedData,
@@ -229,15 +230,41 @@ export const useMeetingStore = create<MeetingStore>((set, get) => {
                 stream: null
               });
 
-              // Add peer connection (initiator if host, responder otherwise)
-              if (state.localPeerId) {
-                peerConnectionManager.addPeer(
-                  participantInfo.peerId,
-                  data.isHost // Host initiates connections
-                ).catch(err => {
-                  console.error(`Failed to add peer ${participantInfo.peerId}:`, err);
-                });
-              }
+              // CRITICAL: Ensure stream exists before adding peer connection
+              // This makes media streaming completely independent and automatic
+              const ensureStreamAndAddPeer = async () => {
+                // Check if stream exists in MediaStreamManager
+                let stream = mediaStreamManager.getStream();
+                
+                // If no stream exists, try to get it from media store
+                if (!stream) {
+                  const { useMediaStore } = await import('./mediaStore.js');
+                  const mediaState = useMediaStore.getState();
+                  stream = mediaState.localStream;
+                }
+                
+                // If still no stream, log warning (stream will be added automatically when available)
+                if (!stream) {
+                  console.warn(`[MeetingStore] No stream available when ${participantInfo.peerId} joined. Stream will be added automatically when available.`);
+                } else {
+                  console.log(`[MeetingStore] Stream available (${stream.getTracks().length} tracks) when ${participantInfo.peerId} joined`);
+                }
+
+                // Add peer connection (stream will be added automatically via PeerConnectionManager subscription)
+                if (state.localPeerId) {
+                  try {
+                    await peerConnectionManager.addPeer(
+                      participantInfo.peerId,
+                      data.isHost // Host initiates connections
+                    );
+                    console.log(`[MeetingStore] Successfully added peer ${participantInfo.peerId}`);
+                  } catch (err) {
+                    console.error(`[MeetingStore] Failed to add peer ${participantInfo.peerId}:`, err);
+                  }
+                }
+              };
+
+              ensureStreamAndAddPeer();
             }
           });
         },
@@ -262,15 +289,41 @@ export const useMeetingStore = create<MeetingStore>((set, get) => {
             stream: null
           });
 
-          // Add peer connection
-          if (state.localPeerId) {
-            peerConnectionManager.addPeer(
-              participant.peerId,
-              state.isHost // Host initiates connections
-            ).catch(err => {
-              console.error(`Failed to add peer ${participant.peerId}:`, err);
-            });
-          }
+          // CRITICAL: Ensure stream exists before adding peer connection
+          // This makes media streaming completely independent and automatic
+          const ensureStreamAndAddPeer = async () => {
+            // Check if stream exists in MediaStreamManager
+            let stream = mediaStreamManager.getStream();
+            
+            // If no stream exists, try to get it from media store
+            if (!stream) {
+              const { useMediaStore } = await import('./mediaStore.js');
+              const mediaState = useMediaStore.getState();
+              stream = mediaState.localStream;
+            }
+            
+            // If still no stream, log warning (stream will be added automatically when available)
+            if (!stream) {
+              console.warn(`[MeetingStore] No stream available when ${participant.peerId} joined. Stream will be added automatically when available.`);
+            } else {
+              console.log(`[MeetingStore] Stream available (${stream.getTracks().length} tracks) when ${participant.peerId} joined`);
+            }
+
+            // Add peer connection (stream will be added automatically via PeerConnectionManager subscription)
+            if (state.localPeerId) {
+              try {
+                await peerConnectionManager.addPeer(
+                  participant.peerId,
+                  state.isHost // Host initiates connections
+                );
+                console.log(`[MeetingStore] Successfully added peer ${participant.peerId}`);
+              } catch (err) {
+                console.error(`[MeetingStore] Failed to add peer ${participant.peerId}:`, err);
+              }
+            }
+          };
+
+          ensureStreamAndAddPeer();
 
           // Add system message
           get().addMessage({
