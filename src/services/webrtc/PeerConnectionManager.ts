@@ -89,19 +89,24 @@ export class PeerConnectionManager {
     // Only subscribe if not already subscribed (preserve subscription across reinitializations)
     if (!this.streamUnsubscribe) {
       this.streamUnsubscribe = mediaStreamManager.onStreamChange((stream) => {
-        console.log('[PeerConnectionManager] Stream changed, updating all peer connections');
+        console.log('[PeerConnectionManager] Stream changed via MediaStreamManager, updating all peer connections');
         this.setLocalStream(stream);
       });
+      console.log('[PeerConnectionManager] Subscribed to MediaStreamManager for automatic stream updates');
+    } else {
+      console.log('[PeerConnectionManager] Stream subscription already active (preserved across rejoin)');
     }
 
     // Get current stream immediately
     const currentStream = mediaStreamManager.getStream();
     if (currentStream) {
+      console.log(`[PeerConnectionManager] Current stream available: ${currentStream.getTracks().length} tracks`);
       this.setLocalStream(currentStream);
+    } else {
+      console.log('[PeerConnectionManager] No stream available yet - will be added automatically when available');
     }
 
     console.log('[PeerConnectionManager] Initialized for peer:', localPeerId);
-    console.log('[PeerConnectionManager] Subscribed to MediaStreamManager for automatic stream updates');
   }
 
   /**
