@@ -268,9 +268,19 @@ export class PeerConnectionManager {
     if (this.peers.has(remotePeerId)) {
       console.log(`[PeerConnectionManager] Peer ${remotePeerId} already exists`);
       const existingPeer = this.peers.get(remotePeerId)!;
-      // Ensure stream is still added to existing connection
-      this.ensureStreamInConnection(existingPeer.connection);
-      return existingPeer.connection;
+      
+      // Check connection state - if failed/disconnected, remove and recreate
+      if (existingPeer.connection.connectionState === 'failed' || 
+          existingPeer.connection.connectionState === 'disconnected' ||
+          existingPeer.connection.iceConnectionState === 'failed') {
+        console.log(`[PeerConnectionManager] Existing peer ${remotePeerId} connection is ${existingPeer.connection.connectionState}, removing and recreating`);
+        this.removePeer(remotePeerId);
+        // Continue to create new connection below
+      } else {
+        // Connection is healthy, ensure stream is added
+        this.ensureStreamInConnection(existingPeer.connection);
+        return existingPeer.connection;
+      }
     }
 
     console.log(`[PeerConnectionManager] Adding peer: ${remotePeerId} (initiator: ${isInitiator})`);

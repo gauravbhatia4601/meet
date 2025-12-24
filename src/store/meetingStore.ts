@@ -217,6 +217,9 @@ export const useMeetingStore = create<MeetingStore>((set, get) => {
           });
 
           // Add all existing participants (except local)
+          // CRITICAL: When rejoining, the rejoining user should NOT initiate connections.
+          // Instead, existing participants will initiate connections via onParticipantJoined.
+          // This prevents deadlocks where both sides wait for an offer.
           data.participants.forEach(participantInfo => {
             if (participantInfo.peerId !== state.localPeerId) {
               get().addParticipant({
@@ -230,41 +233,11 @@ export const useMeetingStore = create<MeetingStore>((set, get) => {
                 stream: null
               });
 
-              // CRITICAL: Ensure stream exists before adding peer connection
-              // This makes media streaming completely independent and automatic
-              const ensureStreamAndAddPeer = async () => {
-                // Check if stream exists in MediaStreamManager
-                let stream = mediaStreamManager.getStream();
-                
-                // If no stream exists, try to get it from media store
-                if (!stream) {
-                  const { useMediaStore } = await import('./mediaStore.js');
-                  const mediaState = useMediaStore.getState();
-                  stream = mediaState.localStream;
-                }
-                
-                // If still no stream, log warning (stream will be added automatically when available)
-                if (!stream) {
-                  console.warn(`[MeetingStore] No stream available when ${participantInfo.peerId} joined. Stream will be added automatically when available.`);
-                } else {
-                  console.log(`[MeetingStore] Stream available (${stream.getTracks().length} tracks) when ${participantInfo.peerId} joined`);
-                }
-
-                // Add peer connection (stream will be added automatically via PeerConnectionManager subscription)
-                if (state.localPeerId) {
-                  try {
-                    await peerConnectionManager.addPeer(
-                      participantInfo.peerId,
-                      data.isHost // Host initiates connections
-                    );
-                    console.log(`[MeetingStore] Successfully added peer ${participantInfo.peerId}`);
-                  } catch (err) {
-                    console.error(`[MeetingStore] Failed to add peer ${participantInfo.peerId}:`, err);
-                  }
-                }
-              };
-
-              ensureStreamAndAddPeer();
+              // CRITICAL: When joining a room with existing participants, DO NOT create peer connections here.
+              // Instead, wait for existing participants to initiate connections via onParticipantJoined.
+              // This ensures that existing participants always send offers to new joiners, preventing deadlocks.
+              // The only exception is if we're the host joining an empty room (which shouldn't happen, but handle it).
+              console.log(`[MeetingStore] Added existing participant ${participantInfo.peerId} to list. Existing participants will initiate connections via onParticipantJoined.`);
             }
           });
         },
@@ -273,8 +246,50 @@ export const useMeetingStore = create<MeetingStore>((set, get) => {
           const { participant } = data;
           const state = get();
 
+          console.log(`[MeetingStore] onParticipantJoined: ${participant.name} (${participant.peerId}), localPeerId: ${state.localPeerId}`);
+
           // Don't add if already exists or is local
           if (participant.peerId === state.localPeerId) {
+            console.log(`[MeetingStore] Ignoring participant-joined for local peer ${participant.peerId}`);
+            return;
+          }
+
+          // Check if participant with same name but different peer ID exists (rejoin scenario)
+          const existingParticipant = state.participants.find(p => p.name === participant.name && p.peerId !== participant.peerId);
+          if (existingParticipant) {
+            console.log(`[MeetingStore] Participant ${participant.name} rejoined with new peer ID: ${existingParticipant.peerId} -> ${participant.peerId}`);
+            // Remove old participant and peer connection
+            get().removeParticipant(existingParticipant.peerId);
+          }
+
+          // Check if participant with same peer ID already exists
+          if (state.participants.some(p => p.peerId === participant.peerId)) {
+            console.log(`[MeetingStore] Participant ${participant.peerId} already exists in participants list, ensuring peer connection...`);
+            // But still ensure peer connection exists and is initiated
+            const ensurePeerConnection = async () => {
+              if (state.localPeerId) {
+                try {
+                  // Check if peer connection exists
+                  const peer = peerConnectionManager.getPeer(participant.peerId);
+                  if (!peer) {
+                    // Peer connection doesn't exist, create it (existing participant should initiate)
+                    console.log(`[MeetingStore] Creating missing peer connection for ${participant.peerId} (existing participant initiating)`);
+                    await peerConnectionManager.addPeer(participant.peerId, true);
+                    console.log(`[MeetingStore] Created missing peer connection for ${participant.peerId}`);
+                  } else {
+                    console.log(`[MeetingStore] Peer connection already exists for ${participant.peerId}, ensuring stream...`);
+                    // Ensure stream is added to existing connection
+                    const stream = mediaStreamManager.getStream();
+                    if (stream) {
+                      peerConnectionManager.setLocalStream(stream);
+                    }
+                  }
+                } catch (err) {
+                  console.error(`[MeetingStore] Failed to ensure peer connection for ${participant.peerId}:`, err);
+                }
+              }
+            };
+            ensurePeerConnection();
             return;
           }
 
@@ -310,13 +325,17 @@ export const useMeetingStore = create<MeetingStore>((set, get) => {
             }
 
             // Add peer connection (stream will be added automatically via PeerConnectionManager subscription)
+            // CRITICAL: When a NEW participant joins, EXISTING participants should always initiate
+            // This ensures connections are established even if both are guests
+            // The host/guest logic only applies to initial room setup, not new joiners
             if (state.localPeerId) {
               try {
+                // Always initiate when a new participant joins (we're the existing participant)
                 await peerConnectionManager.addPeer(
                   participant.peerId,
-                  state.isHost // Host initiates connections
+                  true // Existing participants always initiate to new joiners
                 );
-                console.log(`[MeetingStore] Successfully added peer ${participant.peerId}`);
+                console.log(`[MeetingStore] Successfully added peer ${participant.peerId} (existing participant initiating)`);
               } catch (err) {
                 console.error(`[MeetingStore] Failed to add peer ${participant.peerId}:`, err);
               }

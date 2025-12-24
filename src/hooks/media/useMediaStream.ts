@@ -32,10 +32,49 @@ export const useMediaStream = (options: UseMediaStreamOptions = {}) => {
    * Only creates stream if it doesn't exist or device changed
    */
   const initializeStream = useCallback(async () => {
+    // Check if stream already exists and is valid
+    const existingStream = mediaStreamManager.getStream();
+    if (existingStream) {
+      const audioTrack = existingStream.getAudioTracks()[0];
+      const videoTrack = existingStream.getVideoTracks()[0];
+      const hasValidTracks = 
+        (!audioTrack || audioTrack.readyState === 'live') &&
+        (!videoTrack || videoTrack.readyState === 'live');
+      
+      if (hasValidTracks) {
+        // Check if devices match
+        const currentAudioId = audioTrack?.getSettings().deviceId;
+        const currentVideoId = videoTrack?.getSettings().deviceId;
+        const audioMatches = !audioDeviceId || !currentAudioId || currentAudioId === audioDeviceId;
+        const videoMatches = !videoDeviceId || !currentVideoId || currentVideoId === videoDeviceId;
+        
+        if (audioMatches && videoMatches) {
+          console.log('[useMediaStream] Stream already exists with correct devices, reusing');
+          return; // Stream is valid, no need to recreate
+        }
+      }
+    }
+
     // Prevent concurrent initialization
     if (isInitializing.current) {
-      console.warn('[useMediaStream] Already initializing, skipping...');
-      return;
+      console.warn('[useMediaStream] Already initializing, waiting for completion...');
+      // Wait for current initialization to complete (max 5 seconds)
+      let waitCount = 0;
+      while (isInitializing.current && waitCount < 50) {
+        await new Promise(resolve => setTimeout(resolve, 100));
+        waitCount++;
+      }
+      // Check if stream was created during wait
+      const streamAfterWait = mediaStreamManager.getStream();
+      if (streamAfterWait) {
+        console.log('[useMediaStream] Stream became available during wait');
+        return;
+      }
+      // If still initializing after max wait, proceed anyway (might be stuck)
+      if (isInitializing.current) {
+        console.warn('[useMediaStream] Initialization taking too long, proceeding anyway...');
+        isInitializing.current = false; // Reset flag to allow retry
+      }
     }
 
     // Abort any pending requests
@@ -47,27 +86,7 @@ export const useMediaStream = (options: UseMediaStreamOptions = {}) => {
     abortControllerRef.current = new AbortController();
 
     try {
-      // Check if stream already exists with correct devices
-      const currentStream = mediaStreamManager.getStream();
-      if (currentStream) {
-        const audioTrack = currentStream.getAudioTracks()[0];
-        const videoTrack = currentStream.getVideoTracks()[0];
-        
-        const currentAudioId = audioTrack?.getSettings().deviceId;
-        const currentVideoId = videoTrack?.getSettings().deviceId;
-
-        // If devices match (or both are empty/default) and stream is active, don't recreate
-        const audioMatches = !audioDeviceId || !currentAudioId || currentAudioId === audioDeviceId;
-        const videoMatches = !videoDeviceId || !currentVideoId || currentVideoId === videoDeviceId;
-        
-        if (audioMatches && videoMatches) {
-          if ((!audioTrack || audioTrack.readyState === 'live') && (!videoTrack || videoTrack.readyState === 'live')) {
-            console.log('[useMediaStream] Stream already exists with correct devices, reusing');
-            isInitializing.current = false;
-            return;
-          }
-        }
-      }
+      // Stream existence check was moved above to prevent blocking
 
       // Create new stream with selected devices
       // Allow undefined device IDs (browser will use default device)
