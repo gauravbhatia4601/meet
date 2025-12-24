@@ -97,23 +97,53 @@ export const MeetingView: React.FC<MeetingViewProps> = ({ roomCode, onNavigate }
   const participants = useParticipants();
   const chat = useChat();
 
-  // Ensure stream is initialized and local participant is updated
+  // CRITICAL: Ensure stream is initialized immediately when joining/rejoining
+  // This is especially important when rejoining - stream MUST be available
+  // before other participants try to connect
   React.useEffect(() => {
     const ensureStream = async () => {
-      // Get current stream state
-      const currentStream = media.localStream;
+      // Check MediaStreamManager first (centralized source)
+      const { mediaStreamManager } = await import('../../services/media/MediaStreamManager.js');
+      let currentStream = mediaStreamManager.getStream();
       
+      // If no stream in MediaStreamManager, check media store
+      if (!currentStream) {
+        currentStream = media.localStream;
+        if (currentStream) {
+          // Set in MediaStreamManager so PeerConnectionManager can access it
+          mediaStreamManager.setStream(currentStream);
+          console.log('[MeetingView] Stream found in store, set in MediaStreamManager');
+        }
+      }
+      
+      // If still no stream, initialize it
       if (!currentStream) {
         try {
           console.log('[MeetingView] No stream found, initializing...');
           await media.initializeStream();
-          // Wait for stream to be set
-          await new Promise(resolve => setTimeout(resolve, 200));
+          // Wait for stream to be set and propagated
+          await new Promise(resolve => setTimeout(resolve, 300));
+          
+          // Verify stream is now available
+          const newStream = mediaStreamManager.getStream() || media.localStream;
+          if (newStream) {
+            console.log('[MeetingView] ✅ Stream initialized successfully with', newStream.getTracks().length, 'tracks');
+            // Ensure it's in MediaStreamManager
+            if (!mediaStreamManager.getStream()) {
+              mediaStreamManager.setStream(newStream);
+            }
+          } else {
+            console.error('[MeetingView] ❌ Stream initialization failed - no stream available');
+          }
         } catch (error) {
           console.error('[MeetingView] Failed to initialize stream:', error);
         }
       } else {
-        console.log('[MeetingView] Stream already exists');
+        console.log('[MeetingView] ✅ Stream already exists with', currentStream.getTracks().length, 'tracks');
+        // Ensure it's in MediaStreamManager
+        if (!mediaStreamManager.getStream()) {
+          mediaStreamManager.setStream(currentStream);
+        }
       }
     };
     

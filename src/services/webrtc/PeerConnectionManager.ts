@@ -64,14 +64,12 @@ export class PeerConnectionManager {
     // If peerId changed (user rejoined), clean up old state
     if (this.isInitialized && this.localPeerId !== localPeerId) {
       console.log(`[PeerConnectionManager] PeerId changed from ${this.localPeerId} to ${localPeerId}, reinitializing...`);
-      // Clean up old subscription
-      if (this.streamUnsubscribe) {
-        this.streamUnsubscribe();
-        this.streamUnsubscribe = null;
-      }
       // Remove all old peer connections (they're for the old peerId)
       this.removeAllPeers();
-      // Reset initialization flag
+      // Keep stream subscription active - don't unsubscribe!
+      // This ensures stream continues to work when user rejoins
+      console.log(`[PeerConnectionManager] Kept stream subscription active for rejoin`);
+      // Reset initialization flag to allow re-setup
       this.isInitialized = false;
     }
 
