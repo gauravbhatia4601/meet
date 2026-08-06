@@ -1,0 +1,28 @@
+# Caddy reverse proxy: terminates TLS (Let's Encrypt) and forwards to the app.
+# ${DOMAIN} is injected from docker-compose (CADDY_DOMAIN).
+# WebSocket upgrade must be forwarded for Socket.io signaling.
+
+{$DOMAIN} {
+	# Allow camera/microphone in this secure context
+	header {
+		Permissions-Policy "camera=(self), microphone=(self)"
+		Strict-Transport-Security "max-age=31536000"
+		X-Frame-Options "SAMEORIGIN"
+	}
+
+	# Socket.io and REST go to the Node app
+	handle /socket.io/* {
+		reverse_proxy app:3001
+	}
+	handle /api/* {
+		reverse_proxy app:3001
+	}
+	handle /health {
+		reverse_proxy app:3001
+	}
+
+	# Everything else: the built client served by Express
+	handle {
+		reverse_proxy app:3001
+	}
+}

@@ -1,0 +1,60 @@
+# Production deployment for a VPS.
+#
+#   docker compose up -d --build
+#
+# The `app` service runs the Express server + Socket.io signaling and serves the
+# built client on :3001. Create a `.env` file in this directory to supply the
+# variables below (see `.env.example`). WebRTC requires HTTPS in production
+# (camera/mic are only allowed in a secure context), so TLS is terminated by
+# the optional `caddy` reverse proxy on :80/:443. Alternatively, run `app`
+# directly behind your own nginx/Caddy and set CLIENT_ORIGIN accordingly.
+
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    expose:
+      - "3001"
+    # Uncomment to expose :3001 directly (when NOT using the caddy proxy):
+    # ports:
+    #   - "3001:3001"
+    env_file:
+      # Optional: `.env` is used for secrets. If absent, defaults below apply.
+      - path: .env
+        required: false
+    environment:
+      NODE_ENV: production
+      PORT: 3001
+      # Set your public origin, e.g. https://meet.example.com
+      CLIENT_ORIGIN: ${CLIENT_ORIGIN:-http://localhost:3001}
+      # --- TURN relay (REQUIRED for reliable calls on the public internet) ---
+      TURN_URLS: ${TURN_URLS:-}
+      TURN_USERNAME: ${TURN_USERNAME:-}
+      TURN_CREDENTIAL: ${TURN_CREDENTIAL:-}
+      # --- Cloudflare Calls (alternative to a static TURN server) ---
+      CLOUDFLARE_TURN_TOKEN_ID: ${CLOUDFLARE_TURN_TOKEN_ID:-}
+      CLOUDFLARE_TURN_API_TOKEN: ${CLOUDFLARE_TURN_API_TOKEN:-}
+      CLOUDFLARE_TURN_TTL: ${CLOUDFLARE_TURN_TTL:-86400}
+
+  # Optional: automated HTTPS via Caddy (Let's Encrypt). Remove this service if
+  # you terminate TLS with your own nginx/Caddy/Cloudflare instead.
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp" # HTTP/3
+    depends_on:
+      - app
+    environment:
+      # Your public domain. DNS must point at this VPS.
+      DOMAIN: ${CADDY_DOMAIN:-localhost}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  caddy_data:
+  caddy_config:
