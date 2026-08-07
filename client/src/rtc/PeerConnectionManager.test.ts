@@ -12,13 +12,17 @@ class FakePeerConnection {
   localDescription: { type: string; sdp: string } | null = null;
   onicecandidate: ((ev: { candidate: unknown }) => void) | null = null;
   ontrack: ((ev: { streams: MediaStream[] }) => void) | null = null;
-  senders: { kind: string; track: { kind: string } | null }[] = [];
+  senders: { kind: string; track: { kind: string } | null; replaceTrack: ReturnType<typeof vi.fn> }[] = [];
 
   constructor() {
     FakePeerConnection.instances.push(this);
   }
 
-  addTrack() {}
+  addTrack(track: { kind: string }) {
+    const sender = { kind: track.kind, track, replaceTrack: vi.fn() };
+    this.senders.push(sender);
+    return sender;
+  }
   getSenders() {
     return this.senders;
   }
@@ -136,36 +140,77 @@ describe('PeerConnectionManager', () => {
   });
 
   it('replaceLocalTrack replaces the matching local sender track', () => {
-    const manager = makeManager();
+    const videoTrack = { kind: 'video', readyState: 'live' } as MediaStreamTrack;
+    const stream = {
+      getTracks: () => [videoTrack],
+      getVideoTracks: () => [videoTrack],
+    } as unknown as MediaStream;
+    const socket = makeSocket();
+    const manager = new PeerConnectionManager(
+      socket,
+      { onStream: vi.fn(), onRemoteMediaState: vi.fn() },
+      stream,
+      { iceServers: [] },
+    );
     manager.handleNewPeer('peer-1');
+    // createPeer called addTrack(videoTrack) which returned a real sender,
+    // registered in the manager's per-peer sender map.
     const pc = FakePeerConnection.instances[0];
-    const sender = {
-      kind: 'video',
-      track: { kind: 'video', readyState: 'live' },
-      replaceTrack: vi.fn(),
-    };
-    pc.senders.push(sender as unknown as { kind: string; track: { kind: string } | null });
-    const replaceSpy = vi.spyOn(sender as unknown as { replaceTrack: () => Promise<void> }, 'replaceTrack');
+    const sender = pc.senders[0];
+    const replaceSpy = sender.replaceTrack;
 
     const newTrack = { kind: 'video' } as MediaStreamTrack;
     manager.replaceLocalTrack('video', newTrack);
     expect(replaceSpy).toHaveBeenCalledWith(newTrack);
   });
 
-  it('replaceLocalTrack with null stops the matching sender', () => {
-    const manager = makeManager();
+  it('replaceLocalTrack with null stops the matching sender and a later re-enable still reaches it', () => {
+    const audioTrack = { kind: 'audio', readyState: 'live' } as MediaStreamTrack;
+    const stream = {
+      getTracks: () => [audioTrack],
+      getVideoTracks: () => [],
+    } as unknown as MediaStream;
+    const socket = makeSocket();
+    const manager = new PeerConnectionManager(
+      socket,
+      { onStream: vi.fn(), onRemoteMediaState: vi.fn() },
+      stream,
+      { iceServers: [] },
+    );
     manager.handleNewPeer('peer-1');
     const pc = FakePeerConnection.instances[0];
-    const sender = {
-      kind: 'audio',
-      track: { kind: 'audio', readyState: 'live' },
-      replaceTrack: vi.fn(),
-    };
-    pc.senders.push(sender as unknown as { kind: string; track: { kind: string } | null });
-    const replaceSpy = vi.spyOn(sender as unknown as { replaceTrack: () => Promise<void> }, 'replaceTrack');
+    const sender = pc.senders[0];
+    const replaceSpy = sender.replaceTrack;
 
+    // Mute: replace with null. The old code lost the sender here because it
+    // looked it up by s.track?.kind === 'audio' and the track was now null.
     manager.replaceLocalTrack('audio', null);
     expect(replaceSpy).toHaveBeenCalledWith(null);
+
+    // Unmute: the sender must still be found and receive the new track.
+    const restoredTrack = { kind: 'audio', readyState: 'live' } as MediaStreamTrack;
+    manager.replaceLocalTrack('audio', restoredTrack);
+    expect(replaceSpy).toHaveBeenCalledWith(restoredTrack);
+  });
+
+  it('replaceLocalTrack adds the track and renegotiates when no sender exists (peer joined while muted)', async () => {
+    // Stream with no tracks: createPeer adds nothing, so no sender is
+    // registered for 'video'. Re-enabling video must addTrack + renegotiate.
+    const socket = makeSocket();
+    const manager = makeManager(socket);
+    manager.handleNewPeer('peer-1');
+    const pc = FakePeerConnection.instances[0];
+    const addTrackSpy = vi.spyOn(pc, 'addTrack');
+    const createOfferSpy = vi.spyOn(pc, 'createOffer');
+
+    const newTrack = { kind: 'video', readyState: 'live' } as MediaStreamTrack;
+    manager.replaceLocalTrack('video', newTrack);
+    expect(addTrackSpy).toHaveBeenCalledWith(newTrack, expect.anything());
+    // Renegotiation is async (createOffer -> setLocalDescription -> emit).
+    await vi.waitFor(() => {
+      expect(createOfferSpy).toHaveBeenCalled();
+      expect(socket.emit).toHaveBeenCalledWith('offer', expect.objectContaining({ to: 'peer-1' }));
+    });
   });
 
   it('skips ended local tracks when creating a peer connection', async () => {

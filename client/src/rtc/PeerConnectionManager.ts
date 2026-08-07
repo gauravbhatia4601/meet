@@ -6,8 +6,17 @@ export interface PeerCallbacks {
   onRemoteMediaState: (socketId: string, state: MediaState) => void;
 }
 
+type TrackKind = 'audio' | 'video';
+
 export class PeerConnectionManager {
   private peers = new Map<string, RTCPeerConnection>();
+  // Per-peer, per-kind sender index. We keep this because the old lookup
+  // `pc.getSenders().find(s => s.track?.kind === kind)` stops working the
+  // moment a track is replaced with null (mute) — s.track becomes null and the
+  // sender can never be found again, so re-enabling a device silently failed
+  // to reach remote peers. Indexing senders ourselves keeps them findable
+  // regardless of whether their current track is null.
+  private senders = new Map<string, Map<TrackKind, RTCRtpSender>>();
   private socket: Socket;
   private cb: PeerCallbacks;
   private localStream: MediaStream;
@@ -20,14 +29,9 @@ export class PeerConnectionManager {
     this.rtcConfig = rtcConfig;
   }
 
-  /**
-   * Called when a remote peer announces itself (they just joined). We create
-   * a connection and send an offer.
-   */
   handleNewPeer(peerSocketId: string): void {
     if (this.peers.has(peerSocketId)) return;
     const pc = this.createPeer(peerSocketId);
-    // Give ICE time to gather before sending the offer.
     setTimeout(() => {
       pc.createOffer()
         .then((offer) => pc.setLocalDescription(offer))
@@ -38,7 +42,6 @@ export class PeerConnectionManager {
     }, 50);
   }
 
-  /** Handle an incoming offer from a remote peer. */
   async handleOffer(from: string, offer: RTCSessionDescriptionInit): Promise<void> {
     const pc = this.peers.get(from) ?? this.createPeer(from);
     await pc.setRemoteDescription(offer);
@@ -59,7 +62,6 @@ export class PeerConnectionManager {
     try {
       await pc.addIceCandidate(candidate);
     } catch (err) {
-      // Candidates arriving after the remote description is set are expected.
       console.warn('[rtc] ice candidate error', err);
     }
   }
@@ -69,70 +71,84 @@ export class PeerConnectionManager {
     if (pc) {
       pc.close();
       this.peers.delete(socketId);
+      this.senders.delete(socketId);
     }
   }
 
-  /** Apply the current local media state to every peer connection. */
   broadcastLocalMediaState(state: MediaState): void {
-    const payload = { to: '', state };
     for (const pc of this.peers.keys()) {
-      this.socket.emit('media-state', { ...payload, to: pc });
+      this.socket.emit('media-state', { to: pc, state });
     }
   }
 
   updateTrack(stream: MediaStream): void {
-    for (const pc of this.peers.values()) {
-      const videoTrack = stream.getVideoTracks()[0];
-      const sender = pc
-        .getSenders()
-        .find((s) => s.track?.kind === 'video');
-      if (sender && videoTrack) {
+    const videoTrack = stream.getVideoTracks()[0];
+    if (!videoTrack) return;
+    for (const [peerSocketId, pc] of this.peers) {
+      const peerSenders = this.senders.get(peerSocketId)!;
+      const sender = peerSenders.get('video');
+      if (sender) {
         void sender.replaceTrack(videoTrack);
+      } else {
+        const newSender = pc.addTrack(videoTrack, stream);
+        peerSenders.set('video', newSender);
+        void this.renegotiate(peerSocketId, pc);
       }
     }
   }
 
-  /**
-   * Replace a local track of the given kind across all peers.
-   * Passing `null` stops sending that kind (used when a device is released).
-   */
-  replaceLocalTrack(kind: 'audio' | 'video', track: MediaStreamTrack | null): void {
-    for (const pc of this.peers.values()) {
-      const sender = pc.getSenders().find((s) => s.track?.kind === kind);
+  replaceLocalTrack(kind: TrackKind, track: MediaStreamTrack | null): void {
+    for (const [peerSocketId, pc] of this.peers) {
+      const peerSenders = this.senders.get(peerSocketId)!;
+      const sender = peerSenders.get(kind);
       if (sender) {
         void sender.replaceTrack(track);
+      } else if (track) {
+        // Peer was created while this device was muted, so no sender exists.
+        // Add the track and renegotiate so the remote side receives it.
+        const newSender = pc.addTrack(track, this.localStream);
+        peerSenders.set(kind, newSender);
+        void this.renegotiate(peerSocketId, pc);
       }
     }
   }
 
-  /** Replace a remote peer's video track (for camera/screen switching). */
   replaceRemoteVideoTrack(peerSocketId: string, track: MediaStreamTrack | null): void {
     const pc = this.peers.get(peerSocketId);
     if (!pc) return;
-    const sender = pc.getSenders().find((s) => s.track?.kind === 'video');
-    if (sender) {
-      void sender.replaceTrack(track);
-    }
+    const sender = this.senders.get(peerSocketId)?.get('video');
+    if (sender) void sender.replaceTrack(track);
   }
 
   closeAll(): void {
     for (const pc of this.peers.values()) pc.close();
     this.peers.clear();
+    this.senders.clear();
   }
 
   getPeerCount(): number {
     return this.peers.size;
   }
 
+  private async renegotiate(peerSocketId: string, pc: RTCPeerConnection): Promise<void> {
+    try {
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      this.socket.emit('offer', { to: peerSocketId, offer: pc.localDescription! });
+    } catch (err) {
+      console.error('[rtc] renegotiate failed', err);
+    }
+  }
+
   private createPeer(peerSocketId: string): RTCPeerConnection {
     const pc = new RTCPeerConnection(this.rtcConfig);
+    const peerSenders = new Map<TrackKind, RTCRtpSender>();
+    this.senders.set(peerSocketId, peerSenders);
 
-    // Add all live local tracks so the remote side receives them. Stopped
-    // tracks (a muted camera/mic that was released) are skipped so late-joining
-    // peers don't get dead tracks.
     for (const track of this.localStream.getTracks()) {
       if (track.readyState !== 'live') continue;
-      pc.addTrack(track, this.localStream);
+      const sender = pc.addTrack(track, this.localStream);
+      peerSenders.set(track.kind as TrackKind, sender);
     }
 
     pc.onicecandidate = (event) => {
