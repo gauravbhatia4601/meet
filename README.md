@@ -62,6 +62,13 @@ docker compose up -d --build
 The container builds both apps and serves the client from the Express server
 on port `3001` in a single process.
 
+> **TLS is handled by your existing proxy, not by this stack.** Your domain
+> (e.g. `meet.technioz.com`) is already SSL-protected, so no cert provisioning
+> is needed here. Point your proxy (Cloudflare / nginx / Caddy) at this VPS on
+> port `3001`. WebRTC requires HTTPS for camera/mic, which your proxy provides.
+> Set `CLIENT_ORIGIN` to your public origin (defaults to
+> `https://meet.technioz.com`).
+
 ### Manual
 
 ```bash

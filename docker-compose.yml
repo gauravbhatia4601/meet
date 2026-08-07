@@ -4,20 +4,19 @@
 #
 # The `app` service runs the Express server + Socket.io signaling and serves the
 # built client on :3001. Create a `.env` file in this directory to supply the
-# variables below (see `.env.example`). WebRTC requires HTTPS in production
-# (camera/mic are only allowed in a secure context), so TLS is terminated by
-# the optional `caddy` reverse proxy on :80/:443. Alternatively, run `app`
-# directly behind your own nginx/Caddy and set CLIENT_ORIGIN accordingly.
+# variables below (see `.env.example`).
+#
+# TLS is NOT handled here: your domain (e.g. meet.technioz.com) is already
+# SSL-protected by your existing proxy (Cloudflare / nginx / Caddy). Point that
+# proxy at this VPS on port 3001. WebRTC requires HTTPS in production
+# (camera/mic are only allowed in a secure context), which your proxy provides.
 
 services:
   app:
     build: .
     restart: unless-stopped
-    expose:
-      - "3001"
-    # Uncomment to expose :3001 directly (when NOT using the caddy proxy):
-    # ports:
-    #   - "3001:3001"
+    ports:
+      - "3001:3001"
     env_file:
       # Optional: `.env` is used for secrets. If absent, defaults below apply.
       - path: .env
@@ -25,34 +24,11 @@ services:
     environment:
       NODE_ENV: production
       PORT: 3001
-      # Set your public origin, e.g. https://meet.example.com
-      CLIENT_ORIGIN: ${CLIENT_ORIGIN:-http://localhost:3001}
+      # Your public origin, e.g. https://meet.technioz.com
+      CLIENT_ORIGIN: ${CLIENT_ORIGIN:-https://meet.technioz.com}
       # --- TURN relay (REQUIRED for reliable calls on the public internet) ---
       # TURN/STUN URLs are fetched from the Cloudflare API on the fly, so no
       # TURN URL variables are needed. Only set the Cloudflare credentials.
       CLOUDFLARE_TURN_TOKEN_ID: ${CLOUDFLARE_TURN_TOKEN_ID:-}
       CLOUDFLARE_TURN_API_TOKEN: ${CLOUDFLARE_TURN_API_TOKEN:-}
       CLOUDFLARE_TURN_TTL: ${CLOUDFLARE_TURN_TTL:-86400}
-
-  # Optional: automated HTTPS via Caddy (Let's Encrypt). Remove this service if
-  # you terminate TLS with your own nginx/Caddy/Cloudflare instead.
-  caddy:
-    image: caddy:2-alpine
-    restart: unless-stopped
-    ports:
-      - "80:80"
-      - "443:443"
-      - "443:443/udp" # HTTP/3
-    depends_on:
-      - app
-    environment:
-      # Your public domain. DNS must point at this VPS.
-      DOMAIN: ${CADDY_DOMAIN:-localhost}
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy_data:/data
-      - caddy_config:/config
-
-volumes:
-  caddy_data:
-  caddy_config:
