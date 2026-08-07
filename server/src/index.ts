@@ -18,26 +18,23 @@ const CLIENT_ORIGIN = process.env.CLIENT_ORIGIN ?? 'http://localhost:5173';
 const NODE_ENV = process.env.NODE_ENV ?? 'development';
 
 // --- WebRTC ICE configuration ---
-// STUN is always provided. For reliable connectivity on the public internet
-// behind strict NATs/firewalls, configure a TURN server. Two options:
-//
-// 1) Cloudflare TURN (recommended): set CLOUDFLARE_TURN_TOKEN_ID and
-//    CLOUDFLARE_TURN_API_TOKEN. The server calls Cloudflare's API to mint
-//    short-lived credentials on the fly for each /api/rtc-config request, so
-//    credentials never ship in the client bundle and rotate automatically.
-//
-// 2) Static TURN: set TURN_URLS, TURN_USERNAME, TURN_CREDENTIAL.
-//
-// The client fetches this config from /api/rtc-config before creating peer
-// connections.
+// STUN is always provided as a fallback. For reliable connectivity on the
+// public internet behind strict NATs/firewalls, TURN is required. TURN/STUN
+// URLs are fetched from the Cloudflare API on the fly for each
+// /api/rtc-config request, so no TURN variables need to be set in the env —
+// only the Cloudflare credentials below. The client fetches this config from
+// /api/rtc-config before creating peer connections.
 const CLOUDFLARE_TURN_TOKEN_ID = process.env.CLOUDFLARE_TURN_TOKEN_ID ?? '';
 const CLOUDFLARE_TURN_API_TOKEN = process.env.CLOUDFLARE_TURN_API_TOKEN ?? '';
 const CLOUDFLARE_TURN_TTL = Number(process.env.CLOUDFLARE_TURN_TTL ?? 86400);
-const TURN_URLS = (process.env.TURN_URLS ?? '').split(',').map((s) => s.trim()).filter(Boolean);
-const TURN_USERNAME = process.env.TURN_USERNAME ?? '';
-const TURN_CREDENTIAL = process.env.TURN_CREDENTIAL ?? '';
 
 const CLOUDFLARE_TURN_ENABLED = Boolean(CLOUDFLARE_TURN_TOKEN_ID && CLOUDFLARE_TURN_API_TOKEN);
+
+/** Always-available STUN fallback when Cloudflare TURN is not configured. */
+const STUN_SERVERS: RTCIceServer[] = [
+  { urls: 'stun:stun.l.google.com:19302' },
+  { urls: 'stun:stun1.l.google.com:19302' },
+];
 
 /**
  * Mint short-lived Cloudflare TURN/STUN ICE servers via the Cloudflare API.
@@ -69,21 +66,10 @@ async function buildCloudflareIceServers(): Promise<RTCIceServer[] | null> {
   }
 }
 
-function buildStaticIceServers(): RTCIceServer[] {
-  const servers: RTCIceServer[] = [
-    { urls: 'stun:stun.l.google.com:19302' },
-    { urls: 'stun:stun1.l.google.com:19302' },
-  ];
-  if (TURN_URLS.length > 0 && TURN_USERNAME && TURN_CREDENTIAL) {
-    servers.push({ urls: TURN_URLS, username: TURN_USERNAME, credential: TURN_CREDENTIAL });
-  }
-  return servers;
-}
-
 async function buildIceServers(): Promise<RTCIceServer[]> {
   const cloudflare = await buildCloudflareIceServers();
   if (cloudflare) return cloudflare;
-  return buildStaticIceServers();
+  return STUN_SERVERS;
 }
 
 // Optional TLS. When TLS_CERT and TLS_KEY are set, the server serves HTTPS so

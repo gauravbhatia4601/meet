@@ -136,7 +136,7 @@ and configure these env vars:
 | `NODE_ENV` | `production` |
 | `PORT` | `3001` (or the host's assigned port) |
 | `CLIENT_ORIGIN` | your Vercel app URL, e.g. `https://meet-clone.vercel.app` |
-| `TURN_URLS` / `TURN_USERNAME` / `TURN_CREDENTIAL` | your TURN server (required for public internet) |
+| `CLOUDFLARE_TURN_TOKEN_ID` / `CLOUDFLARE_TURN_API_TOKEN` | Cloudflare Calls credentials (required for public internet) |
 
 The host gives you a public HTTPS URL, e.g. `https://meet-signal.up.railway.app`.
 
@@ -173,21 +173,20 @@ meeting code. Both must be on HTTPS (Vercel provides it) for camera/mic to work.
 
 The client fetches its ICE config (STUN + TURN) from the server at
 `GET /api/rtc-config`, so TURN credentials never ship in the client bundle.
-STUN is always enabled; add a TURN server via server env vars:
+STUN is always enabled as a fallback. TURN/STUN URLs are fetched from the
+Cloudflare API on the fly for each request — no TURN URL variables are needed.
+Set only the Cloudflare credentials:
 
 ```bash
-# Comma-separated TURN URLs (UDP preferred, add TCP/TLS for fallback)
-TURN_URLS=turn:turn.example.com:3478?transport=udp,turns:turn.example.com:5349?transport=tcp
-TURN_USERNAME=user
-TURN_CREDENTIAL=secret
+CLOUDFLARE_TURN_TOKEN_ID=your_token_id
+CLOUDFLARE_TURN_API_TOKEN=your_api_token
+# Optional: credential lifetime in seconds (default 86400 = 24h)
+CLOUDFLARE_TURN_TTL=86400
 ```
 
-You need your own TURN server. Options:
-
-- **Self-hosted** — run [coturn](https://github.com/coturn/coturn) on a public
-  VPS and point `TURN_URLS` at it. This is the standard approach.
-- **Managed** — Twilio, Metered, Xirsys, or Cloudflare Calls provide TURN
-  credentials you can drop into the env vars.
+Get these from the Cloudflare dashboard (Realtime > TURN). The server calls
+`POST https://rtc.live.cloudflare.com/v1/turn/keys/<TOKEN_ID>/credentials/generate-ice-servers`
+to mint short-lived TURN/STUN credentials that rotate automatically.
 
 Without a TURN server, calls only work when both peers can reach each other
 directly (same LAN, or both behind permissive NATs). On the public internet
@@ -202,9 +201,9 @@ with symmetric NATs (common on mobile/cellular), TURN is required.
 | `NODE_ENV` | `development` | `production` serves the built client |
 | `TLS_CERT` | *(empty)* | Path to a PEM cert — enables HTTPS when set |
 | `TLS_KEY` | *(empty)* | Path to the matching PEM private key |
-| `TURN_URLS` | *(empty)* | Comma-separated TURN URLs (e.g. `turn:host:3478?transport=udp`) |
-| `TURN_USERNAME` | *(empty)* | TURN username |
-| `TURN_CREDENTIAL` | *(empty)* | TURN credential/secret |
+| `CLOUDFLARE_TURN_TOKEN_ID` | *(empty)* | Cloudflare Calls TURN token ID |
+| `CLOUDFLARE_TURN_API_TOKEN` | *(empty)* | Cloudflare Calls API token |
+| `CLOUDFLARE_TURN_TTL` | `86400` | TURN credential lifetime in seconds |
 
 ## Architecture
 

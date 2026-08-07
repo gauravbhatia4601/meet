@@ -28,10 +28,8 @@ services:
       # Set your public origin, e.g. https://meet.example.com
       CLIENT_ORIGIN: ${CLIENT_ORIGIN:-http://localhost:3001}
       # --- TURN relay (REQUIRED for reliable calls on the public internet) ---
-      TURN_URLS: ${TURN_URLS:-}
-      TURN_USERNAME: ${TURN_USERNAME:-}
-      TURN_CREDENTIAL: ${TURN_CREDENTIAL:-}
-      # --- Cloudflare Calls (alternative to a static TURN server) ---
+      # TURN/STUN URLs are fetched from the Cloudflare API on the fly, so no
+      # TURN URL variables are needed. Only set the Cloudflare credentials.
       CLOUDFLARE_TURN_TOKEN_ID: ${CLOUDFLARE_TURN_TOKEN_ID:-}
       CLOUDFLARE_TURN_API_TOKEN: ${CLOUDFLARE_TURN_API_TOKEN:-}
       CLOUDFLARE_TURN_TTL: ${CLOUDFLARE_TURN_TTL:-86400}
