@@ -45,7 +45,7 @@ RUN addgroup -S app && adduser -S app -G app
 USER app
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
-  CMD wget -qO- http://localhost:3001/health || exit 1
+  CMD env -u HTTP_PROXY -u HTTPS_PROXY -u http_proxy -u https_proxy -u ALL_PROXY -u all_proxy node -e "fetch('http://localhost:'+(process.env.PORT||3001)+'/health').then(r=>process.exit(r.status===200?0:1)).catch(()=>process.exit(1))"
 
 # Env is injected at runtime (docker-compose / docker run). See
 # docker-compose.yml for the full list of supported variables.
