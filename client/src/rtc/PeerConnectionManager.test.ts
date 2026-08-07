@@ -12,14 +12,15 @@ class FakePeerConnection {
   localDescription: { type: string; sdp: string } | null = null;
   onicecandidate: ((ev: { candidate: unknown }) => void) | null = null;
   ontrack: ((ev: { streams: MediaStream[] }) => void) | null = null;
+  senders: { kind: string; track: { kind: string } | null }[] = [];
 
   constructor() {
     FakePeerConnection.instances.push(this);
   }
 
   addTrack() {}
-  getSenders(): { track: { kind: string } | null }[] {
-    return [];
+  getSenders() {
+    return this.senders;
   }
   createOffer() {
     return Promise.resolve({ type: 'offer', sdp: 'offer-sdp' });
@@ -132,5 +133,63 @@ describe('PeerConnectionManager', () => {
     manager.handleNewPeer('peer-2');
     manager.closeAll();
     expect(manager.getPeerCount()).toBe(0);
+  });
+
+  it('replaceLocalTrack replaces the matching local sender track', () => {
+    const manager = makeManager();
+    manager.handleNewPeer('peer-1');
+    const pc = FakePeerConnection.instances[0];
+    const sender = {
+      kind: 'video',
+      track: { kind: 'video', readyState: 'live' },
+      replaceTrack: vi.fn(),
+    };
+    pc.senders.push(sender as unknown as { kind: string; track: { kind: string } | null });
+    const replaceSpy = vi.spyOn(sender as unknown as { replaceTrack: () => Promise<void> }, 'replaceTrack');
+
+    const newTrack = { kind: 'video' } as MediaStreamTrack;
+    manager.replaceLocalTrack('video', newTrack);
+    expect(replaceSpy).toHaveBeenCalledWith(newTrack);
+  });
+
+  it('replaceLocalTrack with null stops the matching sender', () => {
+    const manager = makeManager();
+    manager.handleNewPeer('peer-1');
+    const pc = FakePeerConnection.instances[0];
+    const sender = {
+      kind: 'audio',
+      track: { kind: 'audio', readyState: 'live' },
+      replaceTrack: vi.fn(),
+    };
+    pc.senders.push(sender as unknown as { kind: string; track: { kind: string } | null });
+    const replaceSpy = vi.spyOn(sender as unknown as { replaceTrack: () => Promise<void> }, 'replaceTrack');
+
+    manager.replaceLocalTrack('audio', null);
+    expect(replaceSpy).toHaveBeenCalledWith(null);
+  });
+
+  it('skips ended local tracks when creating a peer connection', async () => {
+    const socket = makeSocket();
+    const liveTrack = { kind: 'video', readyState: 'live' } as MediaStreamTrack;
+    const endedTrack = { kind: 'audio', readyState: 'ended' } as MediaStreamTrack;
+    const stream = {
+      getTracks: () => [liveTrack, endedTrack],
+      getVideoTracks: () => [liveTrack],
+    } as unknown as MediaStream;
+    const manager = new PeerConnectionManager(
+      socket,
+      { onStream: vi.fn(), onRemoteMediaState: vi.fn() },
+      stream,
+      { iceServers: [] },
+    );
+    const addTrackSpy = vi.spyOn(FakePeerConnection.prototype, 'addTrack');
+
+    manager.handleNewPeer('peer-1');
+    await vi.waitFor(() => {
+      expect(socket.emit).toHaveBeenCalledWith('offer', expect.anything());
+    });
+    // Only the live track should be added.
+    expect(addTrackSpy).toHaveBeenCalledTimes(1);
+    expect(addTrackSpy).toHaveBeenCalledWith(liveTrack, stream);
   });
 });

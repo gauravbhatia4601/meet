@@ -282,37 +282,56 @@ export default function MeetingRoom() {
   }
 
   async function toggleMic() {
+    if (micOnRef.current) {
+      // Muting: stop the hardware and release the track so the OS stops using
+      // the microphone and no audio is captured.
+      const stream = localStreamRef.current;
+      const audioTrack = stream?.getAudioTracks()[0];
+      audioTrack?.stop();
+      if (stream) stream.removeTrack(audioTrack!);
+      rtcRef.current?.replaceLocalTrack('audio', null);
+      micOnRef.current = false;
+      setMicOn(false);
+      updateLocalMediaState({ micOn: false });
+      return;
+    }
+
+    // Unmuting: re-acquire the microphone.
+    const s = await getMedia(false, true);
+    if (!s) return;
+    const audioTrack = s.getAudioTracks()[0];
     const stream = localStreamRef.current;
-    if (!stream) return;
-    const audioTrack = stream.getAudioTracks()[0];
-    if (audioTrack) audioTrack.enabled = !audioTrack.enabled;
-    const on = !!audioTrack?.enabled;
-    micOnRef.current = on;
-    setMicOn(on);
-    updateLocalMediaState({ micOn: on });
+    if (stream) stream.addTrack(audioTrack);
+    rtcRef.current?.replaceLocalTrack('audio', audioTrack);
+    micOnRef.current = true;
+    setMicOn(true);
+    updateLocalMediaState({ micOn: true });
   }
 
   async function toggleCamera() {
+    if (cameraOnRef.current) {
+      // Stopping video: release the camera hardware and stop the stream.
+      const stream = localStreamRef.current;
+      const videoTrack = stream?.getVideoTracks()[0];
+      videoTrack?.stop();
+      if (stream) stream.removeTrack(videoTrack!);
+      rtcRef.current?.replaceLocalTrack('video', null);
+      cameraOnRef.current = false;
+      setCameraOn(false);
+      updateLocalMediaState({ cameraOn: false });
+      return;
+    }
+
+    // Restarting video: re-acquire the camera.
+    const s = await getMedia(true, micOnRef.current);
+    if (!s) return;
+    const videoTrack = s.getVideoTracks()[0];
     const stream = localStreamRef.current;
-    if (!stream) return;
-    if (!cameraOnRef.current && stream.getVideoTracks().length === 0) {
-      const s = await getMedia(true, micOnRef.current);
-      if (s) {
-        localStreamRef.current = s;
-        const oldVideo = stream.getVideoTracks()[0];
-        setLocalStream(s);
-        rtcRef.current?.updateTrack(s);
-        oldVideo?.stop();
-      }
-    }
-    const videoTrack = localStreamRef.current?.getVideoTracks()[0];
-    if (videoTrack) {
-      videoTrack.enabled = cameraOnRef.current;
-      videoTrack.enabled = !videoTrack.enabled;
-      cameraOnRef.current = videoTrack.enabled;
-      setCameraOn(videoTrack.enabled);
-      updateLocalMediaState({ cameraOn: videoTrack.enabled });
-    }
+    if (stream) stream.addTrack(videoTrack);
+    rtcRef.current?.replaceLocalTrack('video', videoTrack);
+    cameraOnRef.current = true;
+    setCameraOn(true);
+    updateLocalMediaState({ cameraOn: true });
   }
 
   async function toggleScreenShare() {
@@ -341,20 +360,25 @@ export default function MeetingRoom() {
   const stopScreenShare = useCallback(() => {
     const stream = localStreamRef.current;
     if (!stream) return;
+    // Release the display-capture hardware.
+    stream.getVideoTracks().forEach((t) => t.stop());
+    stream.getVideoTracks().forEach((t) => stream.removeTrack(t));
+    rtcRef.current?.replaceLocalTrack('video', null);
     setScreenSharing(false);
-    updateLocalMediaState({ screenShareOn: false, cameraOn: cameraOnRef.current });
-    if (!cameraOnRef.current) {
-      void getMedia(true, micOnRef.current).then((s) => {
-        if (s) {
-          localStreamRef.current = s;
-          setLocalStream(s);
-          rtcRef.current?.updateTrack(s);
-          cameraOnRef.current = true;
-          setCameraOn(true);
-          updateLocalMediaState({ cameraOn: true });
-        }
-      });
-    }
+    updateLocalMediaState({ screenShareOn: false, cameraOn: false });
+    // Restore the camera after presentation ends (it was disabled during
+    // sharing).
+    void getMedia(true, micOnRef.current).then((s) => {
+      if (s) {
+        const videoTrack = s.getVideoTracks()[0];
+        const cur = localStreamRef.current;
+        if (cur) cur.addTrack(videoTrack);
+        rtcRef.current?.replaceLocalTrack('video', videoTrack);
+        cameraOnRef.current = true;
+        setCameraOn(true);
+        updateLocalMediaState({ cameraOn: true });
+      }
+    });
   }, [getMedia]);
 
   const selfTileStream = localStream;

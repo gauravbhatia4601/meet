@@ -92,6 +92,19 @@ export class PeerConnectionManager {
     }
   }
 
+  /**
+   * Replace a local track of the given kind across all peers.
+   * Passing `null` stops sending that kind (used when a device is released).
+   */
+  replaceLocalTrack(kind: 'audio' | 'video', track: MediaStreamTrack | null): void {
+    for (const pc of this.peers.values()) {
+      const sender = pc.getSenders().find((s) => s.track?.kind === kind);
+      if (sender) {
+        void sender.replaceTrack(track);
+      }
+    }
+  }
+
   /** Replace a remote peer's video track (for camera/screen switching). */
   replaceRemoteVideoTrack(peerSocketId: string, track: MediaStreamTrack | null): void {
     const pc = this.peers.get(peerSocketId);
@@ -114,8 +127,11 @@ export class PeerConnectionManager {
   private createPeer(peerSocketId: string): RTCPeerConnection {
     const pc = new RTCPeerConnection(this.rtcConfig);
 
-    // Add all local tracks so the remote side receives them.
+    // Add all live local tracks so the remote side receives them. Stopped
+    // tracks (a muted camera/mic that was released) are skipped so late-joining
+    // peers don't get dead tracks.
     for (const track of this.localStream.getTracks()) {
+      if (track.readyState !== 'live') continue;
       pc.addTrack(track, this.localStream);
     }
 
