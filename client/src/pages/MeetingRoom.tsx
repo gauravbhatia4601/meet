@@ -139,10 +139,10 @@ export default function MeetingRoom() {
     document.title = `Meeting ${roomId}`;
     const meta = document.querySelector('meta[name="theme-color"]');
     const prev = meta?.getAttribute('content') ?? null;
-    meta?.setAttribute('content', '#202124');
+    meta?.setAttribute('content', '#000000');
     return () => {
-      meta?.setAttribute('content', prev ?? '#ffffff');
-      document.title = 'Meet Clone';
+      meta?.setAttribute('content', prev ?? '#000000');
+      document.title = 'Nexus // Secure_Uplink';
     };
   }, [roomId, nameReady]);
 

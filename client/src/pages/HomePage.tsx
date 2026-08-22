@@ -7,7 +7,6 @@ export default function HomePage() {
   const socket = useSocket();
   const navigate = useNavigate();
   const [code, setCode] = useState('');
-  const [name, setName] = useState(() => localStorage.getItem('meet_name') ?? '');
   const [error, setError] = useState('');
   const [creating, setCreating] = useState(false);
   const errorRef = useRef<HTMLParagraphElement>(null);
@@ -16,11 +15,6 @@ export default function HomePage() {
   useEffect(() => {
     if (error) errorRef.current?.focus();
   }, [error]);
-
-  // Persist the display name so it survives reloads and room changes.
-  useEffect(() => {
-    if (name.trim()) localStorage.setItem('meet_name', name.trim());
-  }, [name]);
 
   function createRoom() {
     setError('');
@@ -52,105 +46,127 @@ export default function HomePage() {
 
   return (
     <div className="home">
-      <header className="home__header">
-        <div className="home__header-inner">
-          <div className="brand">
-            <span className="brand__mark" aria-hidden="true">
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
-                <rect x="2" y="5" width="13" height="14" rx="3" fill="var(--primary)" />
-                <path d="M15 10.5 22 6.5v11l-7-4" fill="var(--success)" />
-              </svg>
-            </span>
-            <span className="brand__name">Meet Clone</span>
-          </div>
+      <div className="scanline" aria-hidden="true" />
+
+      <nav className="home__nav" aria-label="Primary">
+        <div className="home__brand">Nexus</div>
+        <div className="home__nav-actions">
+          <button type="button" className="home__icon-btn" aria-label="Help" title="Help">
+            <HelpIcon />
+          </button>
+          <button type="button" className="home__icon-btn" aria-label="Settings" title="Settings">
+            <SettingsIcon />
+          </button>
         </div>
-      </header>
+      </nav>
 
       <main id="main-content" className="home__body">
-        <section className="home__intro">
-          <span className="home__eyebrow">WebRTC video calls</span>
-          <h1>Premium Video Meetings for Everyone</h1>
-          <p className="home__sub">
-            Secure, real-time, peer-to-peer video calls — right in your browser. No
-            plugins, no installs, no waiting.
-          </p>
-          <ul className="home__features">
-            <li>
-              <span className="home__feature-icon" aria-hidden="true">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="3" y="4" width="18" height="13" rx="2" /><path d="M9 20h6M12 17v3" strokeLinecap="round" /></svg>
-              </span>
-              High-quality video &amp; audio
-            </li>
-            <li>
-              <span className="home__feature-icon" aria-hidden="true">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><circle cx="12" cy="8" r="4" /><path d="M4 20c1.5-3.5 4.5-5 8-5s6.5 1.5 8 5" strokeLinecap="round" /></svg>
-              </span>
-              Live participant grid
-            </li>
-            <li>
-              <span className="home__feature-icon" aria-hidden="true">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M21 12a9 9 0 1 1-3-6.7" strokeLinecap="round" /><path d="m9 12 2 2 4-4" strokeLinecap="round" strokeLinejoin="round" /><path d="M21 3v4h-4" strokeLinecap="round" strokeLinejoin="round" /></svg>
-              </span>
-              In-call chat &amp; screen sharing
-            </li>
-          </ul>
-        </section>
+        <div className="home__content">
+          <div className="home__hero">
+            <h1 className="home__title">NEXUS // SECURE_UPLINK</h1>
+            <p className="home__subtitle">
+              Premium video meetings for everyone. Secure, real-time, peer-to-peer video calls.
+            </p>
+          </div>
 
-        <section className="home__card">
-          <h2 className="home__card-title">Ready to join?</h2>
-          <form onSubmit={joinRoom} className="home__form" noValidate>
-            <label htmlFor="meeting-code" className="field-label">
-              Meeting code
-            </label>
-            <input
-              id="meeting-code"
-              name="meeting-code"
-              value={code}
-              onChange={(e) => {
-                setCode(e.target.value);
-                setError('');
-              }}
-              placeholder="abc-defg-hij"
-              autoCapitalize="none"
-              autoComplete="off"
-              spellCheck={false}
-              className="text-input"
-            />
+          <div className="home__card terminal-border terminal-bg">
+            <div className="home__card-title">
+              &gt; ENTER_MEETING_CODE<span className="blink" aria-hidden="true">_</span>
+            </div>
+            <form onSubmit={joinRoom} className="home__form" noValidate>
+              <div className="home__field">
+                <span className="home__field-prefix" aria-hidden="true">#</span>
+                <input
+                  id="meeting-code"
+                  name="meeting-code"
+                  value={code}
+                  onChange={(e) => {
+                    setCode(e.target.value);
+                    setError('');
+                  }}
+                  placeholder="XXXX-XXXX-XXXX"
+                  autoCapitalize="none"
+                  autoComplete="off"
+                  spellCheck={false}
+                  aria-label="Meeting Code"
+                  className="terminal-input home__input"
+                />
+              </div>
 
-            <label htmlFor="display-name" className="field-label">
-              Your name
-            </label>
-            <input
-              id="display-name"
-              name="name"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="Jane Doe"
-              autoComplete="name"
-              className="text-input"
-            />
+              {error && (
+                <p className="form-error" role="alert" ref={errorRef} tabIndex={-1}>
+                  {error}
+                </p>
+              )}
 
-            {error && <p className="form-error" role="alert" ref={errorRef} tabIndex={-1}>{error}</p>}
+              <button type="submit" className="terminal-button home__submit">
+                INITIATE_LINK
+              </button>
+            </form>
 
-            <div className="home__actions">
-              <button type="submit" className="btn btn-primary">Join</button>
+            <div className="home__alt">
               <button
                 type="button"
                 onClick={createRoom}
                 disabled={creating}
-                className="btn btn-secondary"
+                className="home__alt-link"
               >
                 {creating && <span className="spinner" aria-hidden="true" />}
-                {creating ? 'Creating…' : 'New Meeting'}
+                {creating ? 'INITIATING…' : 'OR START_NEW_SESSION'}
               </button>
             </div>
-          </form>
-        </section>
+          </div>
+        </div>
       </main>
 
       <footer className="home__footer">
-        <span>Built with WebRTC &amp; Socket.IO</span>
+        <div className="home__footer-brand">© 2024 NEXUS SYSTEMS INTERFACE</div>
+        <div className="home__footer-stats" aria-hidden="true">
+          <span>LATENCY: 12ms</span>
+          <span>ENCRYPTION: AES-256-GCM</span>
+          <span>STATUS: NOMINAL</span>
+        </div>
       </footer>
     </div>
+  );
+}
+
+/* --- Nav icons (stroke-based, currentColor) --- */
+function HelpIcon() {
+  return (
+    <svg
+      width="24"
+      height="24"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <circle cx="12" cy="12" r="10" />
+      <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
+      <line x1="12" y1="17" x2="12.01" y2="17" />
+    </svg>
+  );
+}
+
+function SettingsIcon() {
+  return (
+    <svg
+      width="24"
+      height="24"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <circle cx="12" cy="12" r="3" />
+      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+    </svg>
   );
 }
