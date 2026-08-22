@@ -1,14 +1,13 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useSocket } from '../hooks/useSocket';
 import { PeerConnectionManager } from '../rtc/PeerConnectionManager';
 import VideoTile from '../components/VideoTile';
-import ControlsBar from '../components/ControlsBar';
+import CommandBar from '../components/CommandBar';
 import ChatPanel from '../components/ChatPanel';
 import ConfirmDialog from '../components/ConfirmDialog';
-import type { ChatMessage, MediaState, Participant } from '../types';
+import type { ChatMessage, MediaState } from '../types';
 import { normalizeRoomId } from '../lib/roomCode';
-import { computeTileLayout } from '../lib/tileLayout';
 import { apiUrl } from '../lib/config';
 
 interface PeerState {
@@ -19,14 +18,34 @@ interface PeerState {
   screenShareOn: boolean;
 }
 
+type LogLevel = 'ok' | 'error';
+interface LogEntry {
+  id: number;
+  text: string;
+  level?: LogLevel;
+}
+
 const NAME_KEY = 'meet_name';
 
 function getDisplayName(): string {
   return localStorage.getItem(NAME_KEY) ?? 'Guest';
 }
 
-function pluralParticipants(n: number): string {
-  return new Intl.PluralRules('en').select(n) === 'one' ? 'participant' : 'participants';
+/** Desktop layout breakpoint (matches the CSS @media in index.css). */
+function useIsDesktop() {
+  const [isDesktop, setIsDesktop] = useState(
+    () =>
+      typeof window !== 'undefined'
+        ? window.matchMedia?.('(min-width: 768px)')?.matches ?? false
+        : false,
+  );
+  useEffect(() => {
+    const mq = window.matchMedia('(min-width: 768px)');
+    const onChange = () => setIsDesktop(mq.matches);
+    mq.addEventListener?.('change', onChange);
+    return () => mq.removeEventListener?.('change', onChange);
+  }, []);
+  return isDesktop;
 }
 
 export default function MeetingRoom() {
@@ -34,15 +53,14 @@ export default function MeetingRoom() {
   const roomId = normalizeRoomId(rawRoomId);
   const socket = useSocket();
   const navigate = useNavigate();
+  const isDesktop = useIsDesktop();
 
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
   const [peers, setPeers] = useState<Map<string, PeerState>>(new Map());
-  const [participants, setParticipants] = useState<Participant[]>([]);
+  const [hostId, setHostId] = useState<string | null>(null);
   const [displayName, setDisplayName] = useState(getDisplayName);
   const [nameInput, setNameInput] = useState(getDisplayName);
   const [nameReady, setNameReady] = useState(() => !!getDisplayName().trim());
-  const [stageSize, setStageSize] = useState<{ width: number; height: number } | null>(null);
-  const stageRef = useRef<HTMLDivElement>(null);
   const [micOn, setMicOn] = useState(true);
   const [cameraOn, setCameraOn] = useState(true);
   const [screenSharing, setScreenSharing] = useState(false);
@@ -54,8 +72,12 @@ export default function MeetingRoom() {
   const [connError, setConnError] = useState('');
   const [raisedHands, setRaisedHands] = useState<Set<string>>(new Set());
   const [confirmLeave, setConfirmLeave] = useState(false);
-  const [copied, setCopied] = useState(false);
   const [gateError, setGateError] = useState('');
+  const [logs, setLogs] = useState<LogEntry[]>([
+    { id: 0, text: '> ENCRYPTION: ACTIVE', level: 'ok' },
+    { id: 1, text: '> HANDSHAKE: SUCCESS', level: 'ok' },
+    { id: 2, text: '> AWAITING INPUT…' },
+  ]);
   const [autoFocusName] = useState(
     () =>
       typeof window !== 'undefined'
@@ -63,35 +85,49 @@ export default function MeetingRoom() {
         : false,
   );
   const gateErrorRef = useRef<HTMLParagraphElement>(null);
+  const sysLogsRef = useRef<HTMLDivElement>(null);
+  const logIdRef = useRef(3);
 
   const rtcRef = useRef<PeerConnectionManager | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
   const mediaStateRef = useRef<MediaState>({ micOn: true, cameraOn: true, screenShareOn: false });
-  const peersRef = useRef<Map<string, PeerState>>(new Map());
   const micOnRef = useRef(true);
   const cameraOnRef = useRef(true);
   const navigatedAwayRef = useRef(false);
+  const peersRef = useRef<Map<string, PeerState>>(new Map());
+
+  const pushLog = useCallback((text: string, level?: LogLevel) => {
+    setLogs((prev) => [...prev, { id: logIdRef.current++, text, level }].slice(-80));
+  }, []);
+
+  useEffect(() => {
+    sysLogsRef.current?.scrollTo({ top: sysLogsRef.current.scrollHeight });
+  }, [logs]);
 
   useEffect(() => {
     peersRef.current = peers;
   }, [peers]);
 
-  // Surface signaling-server connection failures instead of hanging on
-  // "Joining meeting…". This fires regardless of the name gate, so a broken
-  // deployment (e.g. VITE_SERVER_URL unset on a static host) is reported.
+  // Surface signaling-server connection failures instead of hanging on the
+  // "Establishing uplink…" state.
   useEffect(() => {
     const onConnectError = (err: Error) => {
       setConnError(
         `Could not reach the meeting server. ${err.message ? `(${err.message})` : ''} ` +
           'The signaling server may be offline or not configured for this deployment.',
       );
+      pushLog(`> ERR: uplink failed ${err.message ? `(${err.message})` : ''}`, 'error');
     };
     const onDisconnect = (reason: string) => {
       if (reason === 'io server disconnect') {
         setConnError('Disconnected by the meeting server.');
+        pushLog('> ERR: disconnected by server', 'error');
       }
     };
-    const onConnect = () => setConnError('');
+    const onConnect = () => {
+      setConnError('');
+      pushLog('> UPLINK ESTABLISHED', 'ok');
+    };
     socket.on('connect_error', onConnectError);
     socket.on('disconnect', onDisconnect);
     socket.on('connect', onConnect);
@@ -100,25 +136,7 @@ export default function MeetingRoom() {
       socket.off('disconnect', onDisconnect);
       socket.off('connect', onConnect);
     };
-  }, [socket]);
-
-  // Track the stage size so tile layout can adapt to device width and the
-  // available area (resizes with window and chat panel open/close).
-  useEffect(() => {
-    const el = stageRef.current;
-    if (!el) return;
-    const measure = () => {
-      setStageSize({ width: el.clientWidth, height: el.clientHeight });
-    };
-    measure();
-    const ro = new ResizeObserver(measure);
-    ro.observe(el);
-    window.addEventListener('resize', measure);
-    return () => {
-      ro.disconnect();
-      window.removeEventListener('resize', measure);
-    };
-  }, [joined, chatOpen]);
+  }, [socket, pushLog]);
 
   // Keep chat open/closed state in the URL so it survives reloads and shares.
   useEffect(() => {
@@ -131,9 +149,7 @@ export default function MeetingRoom() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chatOpen]);
 
-  // Reflect the meeting in the document title and theme color so browser tabs,
-  // mobile address bars, and PWAs show the correct context. Only applies once
-  // we're past the name gate, since the gate itself uses a light surface.
+  // Reflect the meeting in the document title and theme color.
   useEffect(() => {
     if (!nameReady) return;
     document.title = `Meeting ${roomId}`;
@@ -220,10 +236,11 @@ export default function MeetingRoom() {
         }, stream, rtcConfig);
         rtcRef.current = rtc;
         setJoined(true);
+        pushLog('> SYNC COMPLETE', 'ok');
       });
 
-      socket.on('participants', ({ participants: list }) => {
-        setParticipants(list);
+      socket.on('participants', ({ participants: list, hostId: h }) => {
+        setHostId(h);
         setPeers((prev) => {
           const next = new Map(prev);
           const names = new Map(list.map((p) => [p.socketId, p.displayName]));
@@ -236,6 +253,7 @@ export default function MeetingRoom() {
 
       socket.on('new-peer', ({ peerSocketId }) => {
         rtcRef.current?.handleNewPeer(peerSocketId);
+        pushLog('> NEW_NODE uplink');
       });
 
       socket.on('offer', ({ from, offer }) => {
@@ -257,6 +275,7 @@ export default function MeetingRoom() {
           next.delete(socketId);
           return next;
         });
+        pushLog('> NODE dropped');
       });
 
       socket.on('chat-message', (msg) => {
@@ -330,8 +349,6 @@ export default function MeetingRoom() {
 
   async function toggleMic() {
     if (micOnRef.current) {
-      // Muting: stop the hardware and release the track so the OS stops using
-      // the microphone and no audio is captured.
       const stream = localStreamRef.current;
       const audioTrack = stream?.getAudioTracks()[0];
       audioTrack?.stop();
@@ -343,7 +360,6 @@ export default function MeetingRoom() {
       return;
     }
 
-    // Unmuting: re-acquire the microphone.
     const s = await getMedia(false, true);
     if (!s) return;
     const audioTrack = s.getAudioTracks()[0];
@@ -357,7 +373,6 @@ export default function MeetingRoom() {
 
   async function toggleCamera() {
     if (cameraOnRef.current) {
-      // Stopping video: release the camera hardware and stop the stream.
       const stream = localStreamRef.current;
       const videoTrack = stream?.getVideoTracks()[0];
       videoTrack?.stop();
@@ -369,7 +384,6 @@ export default function MeetingRoom() {
       return;
     }
 
-    // Restarting video: re-acquire the camera.
     const s = await getMedia(true, micOnRef.current);
     if (!s) return;
     const videoTrack = s.getVideoTracks()[0];
@@ -407,14 +421,11 @@ export default function MeetingRoom() {
   const stopScreenShare = useCallback(() => {
     const stream = localStreamRef.current;
     if (!stream) return;
-    // Release the display-capture hardware.
     stream.getVideoTracks().forEach((t) => t.stop());
     stream.getVideoTracks().forEach((t) => stream.removeTrack(t));
     rtcRef.current?.replaceLocalTrack('video', null);
     setScreenSharing(false);
     updateLocalMediaState({ screenShareOn: false, cameraOn: false });
-    // Restore the camera after presentation ends (it was disabled during
-    // sharing).
     void getMedia(true, micOnRef.current).then((s) => {
       if (s) {
         const videoTrack = s.getVideoTracks()[0];
@@ -427,8 +438,6 @@ export default function MeetingRoom() {
       }
     });
   }, [getMedia]);
-
-  const selfTileStream = localStream;
 
   function submitName(e: React.FormEvent) {
     e.preventDefault();
@@ -462,141 +471,89 @@ export default function MeetingRoom() {
 
   function copyInvite() {
     navigator.clipboard?.writeText(`${window.location.origin}/room/${roomId}`).then(
-      () => {
-        setCopied(true);
-        window.setTimeout(() => setCopied(false), 2000);
-      },
-      () => undefined,
+      () => pushLog('> INVITE_LINK copied', 'ok'),
+      () => pushLog('> ERR: could not copy invite link', 'error'),
     );
   }
 
-  const participantCount = participants.length; // roster already includes the local user
-
-  const stageSizeForLayout = stageSize ?? { width: 800, height: 600 };
-  const layout = computeTileLayout({
-    participantCount,
-    width: stageSizeForLayout.width,
-    height: stageSizeForLayout.height,
-  });
-
-  const tiles: { key: string; node: ReactNode }[] = [];
-  if (layout.mode === 'spotlight') {
-    // Big main tile for the first user, small self-view in the corner.
-    tiles.push({
-      key: 'main',
-      node: (
-        <VideoTile
-          stream={peers.size > 0 ? Array.from(peers.values())[0]?.stream : selfTileStream}
-          name={
-            peers.size > 0
-              ? Array.from(peers.values())[0]?.displayName ?? 'Guest'
-              : `${displayName} (You)`
-          }
-          isLocal={peers.size === 0}
-          micOn={peers.size > 0 ? Array.from(peers.values())[0]?.micOn ?? true : micOn}
-          cameraOn={peers.size > 0 ? Array.from(peers.values())[0]?.cameraOn ?? true : cameraOn}
-          screenShareOn={peers.size > 0 ? Array.from(peers.values())[0]?.screenShareOn ?? false : screenSharing}
-          raisedHand={peers.size > 0 ? raisedHands.has(Array.from(peers.keys())[0]) : false}
-        />
-      ),
-    });
-    tiles.push({
-      key: 'self',
-      node: (
-        <VideoTile
-          stream={selfTileStream}
-          name={`${displayName} (You)`}
-          isLocal
-          micOn={micOn}
-          cameraOn={cameraOn}
-          screenShareOn={screenSharing}
-          isSelfView
-        />
-      ),
-    });
-  } else {
-    tiles.push({
-      key: 'self',
-      node: (
-        <VideoTile
-          stream={selfTileStream}
-          name={`${displayName} (You)`}
-          isLocal
-          micOn={micOn}
-          cameraOn={cameraOn}
-          screenShareOn={screenSharing}
-          isSelfView
-        />
-      ),
-    });
-    Array.from(peers.entries()).forEach(([id, p]) => {
-      tiles.push({
-        key: id,
-        node: (
-          <VideoTile
-            stream={p.stream}
-            name={p.displayName}
-            micOn={p.micOn}
-            cameraOn={p.cameraOn}
-            screenShareOn={p.screenShareOn}
-            raisedHand={raisedHands.has(id)}
-          />
-        ),
-      });
-    });
+  function raiseHand() {
+    socket.emit('raise-hand', { roomId });
   }
 
-  function renderTiles() {
-    const mode = layout.mode;
-    if (mode === 'single') {
-      return (
-        <div className="call__cell" style={{ width: '100%', height: '100%', minWidth: 0, minHeight: 0 }}>
-          {tiles[0]?.node}
-        </div>
-      );
+  // --- Command parser: the call is driven by slash commands typed in the bar.
+  function runCommand(raw: string) {
+    const input = raw.trim();
+    if (!input) return;
+    const lower = input.toLowerCase();
+    const body = lower.startsWith('/') ? lower.slice(1) : lower;
+    const [action] = body.split(/\s+/);
+    switch (action) {
+      case 'mute':
+      case 'unmute':
+      case 'mic':
+        pushLog(`> /${action.toUpperCase()} :: mic`, 'ok');
+        void toggleMic();
+        break;
+      case 'cam':
+      case 'camera':
+      case 'video':
+        pushLog(`> /${action.toUpperCase()} :: camera`, 'ok');
+        void toggleCamera();
+        break;
+      case 'share':
+      case 'screen':
+      case 'present':
+        pushLog(`> /${action.toUpperCase()} :: screen_share`, 'ok');
+        void toggleScreenShare();
+        break;
+      case 'hand':
+      case 'raise':
+        pushLog('> /HAND :: raise_hand', 'ok');
+        raiseHand();
+        break;
+      case 'chat':
+      case 'comms':
+        setChatOpen((v) => !v);
+        pushLog('> /CHAT :: comms_toggle', 'ok');
+        break;
+      case 'copy':
+      case 'invite':
+      case 'link':
+        copyInvite();
+        break;
+      case 'exit':
+      case 'leave':
+      case 'quit':
+        pushLog('> /EXIT :: leave_session', 'ok');
+        setConfirmLeave(true);
+        break;
+      case 'help':
+      case '?':
+      case 'commands':
+        pushLog('> commands: /mute /cam /share /hand /chat /copy /exit /help', 'ok');
+        break;
+      default:
+        pushLog(`> ERR: unknown command /${action}`, 'error');
     }
-    if (mode === 'spotlight') {
-      const first = tiles[0]?.node;
-      const second = tiles[1]?.node;
-      return (
-        <>
-          <div className="call__cell call__cell--main" style={{ width: '100%', height: '100%', minWidth: 0, minHeight: 0 }}>
-            {first}
-          </div>
-          <div
-            className="call__cell call__cell--corner"
-            style={{
-              width: layout.secondaryWidth,
-              height: layout.secondaryHeight,
-              minWidth: 0,
-              minHeight: 0,
-            }}
-          >
-            {second}
-          </div>
-        </>
-      );
-    }
-    return tiles.map((t) => (
-      <div
-        key={t.key}
-        className="call__cell"
-        style={{
-          width: layout.tileWidth,
-          height: layout.tileHeight,
-          minWidth: 0,
-          minHeight: 0,
-        }}
-      >
-        {t.node}
-      </div>
-    ));
   }
+
+  const selfTileStream = localStream;
+  const peerEntries = Array.from(peers.entries());
+  const nodeCount = peers.size + 1;
+
+  const chatPanel = (
+    <ChatPanel
+      messages={messages}
+      mySocketId={socket.id ?? ''}
+      onSend={sendChat}
+      onClose={() => setChatOpen(false)}
+    />
+  );
 
   if (!nameReady) {
     return (
       <main id="main-content" className="namegate">
-        <div className="namegate__card">
+        <div className="namegate__card terminal-border">
           <div className="brand namegate__brand">
             <span className="brand__mark" aria-hidden="true">
               <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
@@ -604,12 +561,12 @@ export default function MeetingRoom() {
                 <path d="M15 10.5 22 6.5v11l-7-4" fill="var(--success)" />
               </svg>
             </span>
-            <span className="brand__name">Meet Clone</span>
+            <span className="brand__name">Nexus</span>
           </div>
-          <h1 className="namegate__title">Join the Meeting</h1>
-          <p className="namegate__sub">Enter your name so others know who you are.</p>
+          <h1 className="namegate__title">Establish Uplink</h1>
+          <p className="namegate__sub">Enter your callsign so others can identify you.</p>
           <form onSubmit={submitName} className="namegate__form" noValidate>
-            <label htmlFor="gate-name" className="field-label">Your name</label>
+            <label htmlFor="gate-name" className="field-label">Callsign</label>
             <input
               id="gate-name"
               name="name"
@@ -627,7 +584,7 @@ export default function MeetingRoom() {
               <p className="form-error" role="alert" ref={gateErrorRef} tabIndex={-1}>{gateError}</p>
             )}
             <button type="submit" className="btn btn-primary namegate__submit">
-              Join Meeting
+              Connect
             </button>
           </form>
         </div>
@@ -636,69 +593,132 @@ export default function MeetingRoom() {
   }
 
   return (
-    <main id="main-content" className="call">
+    <main id="main-content" className="call crt-flicker">
       <h1 className="visually-hidden">{`Meeting ${roomId}`}</h1>
-      <div className="call__main">
-        <div className="call__stage" ref={stageRef}>
-          {!joined && !error && !connError && (
-            <div className="call__status">Joining meeting…</div>
-          )}
-          {connError && (
-            <div className="call__error">
-              <p className="call__error-text">{connError}</p>
-              <Link to="/" className="btn btn-primary" onClick={cleanupMedia}>Go Home</Link>
-            </div>
-          )}
-          {error && (
-            <div className="call__error">
-              <p className="call__error-text">{error}</p>
-              <Link to="/" className="btn btn-primary" onClick={cleanupMedia}>Go Home</Link>
-            </div>
-          )}
-          {joined && (
-            <div
-              className="call__grid"
-              data-mode={layout.mode}
-              data-columns={layout.mode === 'grid' || layout.mode === 'scrollable' ? layout.columns : undefined}
+      <div className="scanlines" aria-hidden="true" />
+
+      <header className="call__bar">
+        <div className="call__bar-left">
+          <span className="call__bar-icon" aria-hidden="true">
+            <TerminalIcon />
+          </span>
+          <span className="call__bar-title glitch-text" data-text="NEXUS_OS_v2.4">
+            NEXUS_OS_v2.4
+          </span>
+        </div>
+        <div className="call__bar-right">
+          <div className="call__status-chip">
+            <span className="live-dot" aria-hidden="true" />
+            LIVE UPLINK
+          </div>
+          {!isDesktop && (
+            <button
+              type="button"
+              className={`call__chat-toggle${chatOpen ? ' call__chat-toggle--active' : ''}`}
+              onClick={() => setChatOpen((v) => !v)}
+              aria-label="Toggle chat"
+              aria-pressed={chatOpen}
             >
-              {renderTiles()}
-            </div>
+              <ChatIcon />
+            </button>
           )}
         </div>
+      </header>
 
-        {chatOpen && (
-          <ChatPanel messages={messages} mySocketId={socket.id ?? ''} onSend={sendChat} onClose={() => setChatOpen(false)} />
+      <div className="call__body">
+        <div className="call__main">
+          <div className="call__grid-wrap">
+            {!joined && !error && !connError && (
+              <div className="call__status">Establishing uplink…</div>
+            )}
+            {connError && (
+              <div className="call__error">
+                <p className="call__error-text">{connError}</p>
+                <Link to="/" className="btn btn-primary" onClick={cleanupMedia}>Go Home</Link>
+              </div>
+            )}
+            {error && (
+              <div className="call__error">
+                <p className="call__error-text">{error}</p>
+                <Link to="/" className="btn btn-primary" onClick={cleanupMedia}>Go Home</Link>
+              </div>
+            )}
+            {joined && (
+              <div className={`call__peers${peerEntries.length === 0 ? ' call__peers--empty' : ''}`}>
+                {peerEntries.length === 0 ? (
+                  <span>// awaiting nodes…</span>
+                ) : (
+                  peerEntries.map(([id, p]) => (
+                    <VideoTile
+                      key={id}
+                      stream={p.stream}
+                      name={p.displayName}
+                      micOn={p.micOn}
+                      cameraOn={p.cameraOn}
+                      screenShareOn={p.screenShareOn}
+                      raisedHand={raisedHands.has(id)}
+                      isHost={id === hostId}
+                    />
+                  ))
+                )}
+              </div>
+            )}
+            {joined && (
+              <div className="call__self">
+                <VideoTile
+                  stream={selfTileStream}
+                  name={`${displayName} (You)`}
+                  isLocal
+                  micOn={micOn}
+                  cameraOn={cameraOn}
+                  screenShareOn={screenSharing}
+                  isSelfView
+                  isHost={socket.id === hostId}
+                  raisedHand={raisedHands.has(socket.id ?? '')}
+                />
+              </div>
+            )}
+          </div>
+
+          <CommandBar onCommand={runCommand} />
+
+          <footer className="call__foot">
+            <span>© 2142 NEXUS_CORE</span>
+            <div className="call__foot-stats">
+              <span>ENCRYPTION: AES-256</span>
+              <span>NODES: {nodeCount}</span>
+              <span>STATUS: NOMINAL</span>
+            </div>
+          </footer>
+        </div>
+
+        {isDesktop && (
+          <aside className="call__side">
+            {chatPanel}
+            <div className="syslogs terminal-border">
+              <div className="syslogs__header">
+                <span>SYS_LOGS</span>
+              </div>
+              <div className="syslogs__list" ref={sysLogsRef}>
+                {logs.map((l) => (
+                  <div
+                    key={l.id}
+                    className={`syslogs__item${l.level ? ` syslogs__item--${l.level}` : ''}`}
+                  >
+                    {l.text}
+                  </div>
+                ))}
+              </div>
+            </div>
+          </aside>
         )}
       </div>
 
-      <div className="call__footer">
-        <div className="call__meta">
-          <span className="call__room">
-            Meeting: <strong translate="no">{roomId}</strong>
-          </span>
-          <button onClick={copyInvite} className="call__copy">
-            {copied ? 'Copied' : 'Copy Invite'}
-          </button>
-          <span className="visually-hidden" aria-live="polite">{copied ? 'Invite link copied to clipboard' : ''}</span>
-          <span className="call__count">
-            {participantCount} {pluralParticipants(participantCount)}
-          </span>
-        </div>
-        <ControlsBar
-          micOn={micOn}
-          cameraOn={cameraOn}
-          screenSharing={screenSharing}
-          chatOpen={chatOpen}
-          onToggleMic={toggleMic}
-          onToggleCamera={toggleCamera}
-          onToggleScreenShare={toggleScreenShare}
-          onToggleChat={() => setChatOpen((v) => !v)}
-          onLeave={() => setConfirmLeave(true)}
-        />
-      </div>
+      {!isDesktop && chatOpen && chatPanel}
+
       <ConfirmDialog
         open={confirmLeave}
-        title="Leave Meeting?"
+        title="Leave Session?"
         message="You'll be disconnected from this call. You can rejoin with the same link."
         confirmLabel="Leave"
         cancelLabel="Stay"
@@ -706,5 +726,24 @@ export default function MeetingRoom() {
         onCancel={() => setConfirmLeave(false)}
       />
     </main>
+  );
+}
+
+/* --- App bar icons --- */
+function TerminalIcon() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="3" y="4" width="18" height="16" />
+      <path d="M7 9l3 3-3 3" />
+      <line x1="13" y1="15" x2="17" y2="15" />
+    </svg>
+  );
+}
+
+function ChatIcon() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M21 11.5a8.38 8.38 0 0 1-9 8.5 8.5 8.5 0 0 1-3.8-.9L3 21l1.9-5.2A8.5 8.5 0 0 1 12 3a8.38 8.38 0 0 1 9 8.5z" />
+    </svg>
   );
 }
