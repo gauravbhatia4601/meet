@@ -20,15 +20,15 @@ export default function ControlsBar({
         {micOn ? <MicOn /> : <MicOff />}
       </ControlBtn>
 
-      <ControlBtn label={cameraOn ? 'Stop video' : 'Start video'} active={cameraOn} onClick={onToggleCamera}>
+      <ControlBtn label={cameraOn ? 'Stop Video' : 'Start Video'} active={cameraOn} onClick={onToggleCamera}>
         {cameraOn ? <CamOn /> : <CamOff />}
       </ControlBtn>
 
-      <ControlBtn label={screenSharing ? 'Stop presenting' : 'Present'} active={screenSharing} onClick={onToggleScreenShare}>
+      <ControlBtn label={screenSharing ? 'Stop Presenting' : 'Present'} active={screenSharing} onClick={onToggleScreenShare}>
         <ScreenShare />
       </ControlBtn>
 
-      <ControlBtn label={chatOpen ? 'Close chat' : 'Chat'} active={chatOpen} onClick={onToggleChat}>
+      <ControlBtn label={chatOpen ? 'Close Chat' : 'Chat'} active={chatOpen} onClick={onToggleChat}>
         <ChatIcon />
       </ControlBtn>
 
@@ -50,7 +50,6 @@ function ControlBtn({
       <button
         onClick={onClick}
         title={label}
-        aria-pressed={active}
         aria-label={label}
         className={`control__btn${active ? ' control__btn--active' : ''}`}
       >

@@ -73,6 +73,8 @@ button {
   border: none;
   background: none;
   color: inherit;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
 }
 
 input {
@@ -82,6 +84,8 @@ input {
 a {
   color: inherit;
   text-decoration: none;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
 }
 
 /* --- Reusable button variants --- */
@@ -209,6 +213,7 @@ a {
   margin-bottom: 16px;
   color: var(--text);
   letter-spacing: -0.02em;
+  text-wrap: balance;
 }
 .home__sub {
   font-size: 17px;
@@ -256,6 +261,7 @@ a {
   color: var(--text);
   margin-bottom: 20px;
   letter-spacing: -0.01em;
+  text-wrap: balance;
 }
 .home__form {
   display: flex;
@@ -350,6 +356,7 @@ a {
   color: var(--text);
   letter-spacing: -0.01em;
   margin-bottom: 6px;
+  text-wrap: balance;
 }
 .namegate__sub {
   font-size: 15px;
@@ -382,6 +389,7 @@ a {
   flex: 1;
   overflow: auto;
   padding: 20px;
+  color-scheme: dark;
 }
 .call__status {
   display: flex;
@@ -445,6 +453,7 @@ a {
 .call__footer {
   background: var(--bg);
   border-top: 1px solid var(--border);
+  padding-bottom: env(safe-area-inset-bottom);
 }
 .call__meta {
   display: flex;
@@ -473,6 +482,11 @@ a {
 }
 .call__copy:hover {
   text-decoration: underline;
+}
+.call__copy:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
 }
 
 /* --- Controls bar --- */
@@ -603,6 +617,11 @@ a {
   font-weight: 500;
   padding: 4px 10px;
   border-radius: 12px;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .tile__icons {
   display: flex;
@@ -644,6 +663,10 @@ a {
 .chat__close:hover {
   background: var(--surface-hover);
 }
+.chat__close:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
 .chat__list {
   flex: 1;
   overflow-y: auto;
@@ -667,6 +690,8 @@ a {
   max-width: 85%;
   font-size: 14px;
   border: 1px solid var(--border);
+  content-visibility: auto;
+  contain-intrinsic-size: auto 48px;
 }
 .chat__bubble--mine {
   align-self: flex-end;
@@ -704,6 +729,104 @@ a {
   box-shadow: 0 0 0 3px var(--primary-soft);
 }
 
+/* --- Accessibility utilities --- */
+.skip-link {
+  position: absolute;
+  left: 12px;
+  top: -48px;
+  z-index: 1000;
+  padding: 10px 16px;
+  background: var(--primary);
+  color: var(--on-primary);
+  border-radius: var(--radius-md);
+  font-weight: 600;
+  font-size: 14px;
+  transition: top 0.15s ease;
+}
+.skip-link:focus {
+  top: 12px;
+  outline: 2px solid var(--text);
+  outline-offset: 2px;
+}
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+.spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: spinner-rotate 0.6s linear infinite;
+}
+@keyframes spinner-rotate {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* --- Confirm dialog --- */
+.dialog-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  padding: 20px;
+  overscroll-behavior: contain;
+}
+.dialog {
+  background: var(--surface);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  padding: 28px;
+  max-width: 400px;
+  width: 100%;
+  overscroll-behavior: contain;
+}
+.dialog__title {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 8px;
+  text-wrap: balance;
+}
+.dialog__message {
+  color: var(--text-secondary);
+  font-size: 15px;
+  margin-bottom: 22px;
+  text-wrap: pretty;
+}
+.dialog__actions {
+  display: flex;
+  gap: 12px;
+  justify-content: flex-end;
+}
+.dialog__actions .btn {
+  min-width: 96px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
 @media (max-width: 760px) {
   .chat {
     position: fixed;
@@ -713,5 +836,9 @@ a {
     height: 100vh;
     z-index: 20;
     box-shadow: var(--shadow-lg);
+    overscroll-behavior: contain;
+    padding-right: env(safe-area-inset-right);
+    padding-top: env(safe-area-inset-top);
+    padding-bottom: env(safe-area-inset-bottom);
   }
 }

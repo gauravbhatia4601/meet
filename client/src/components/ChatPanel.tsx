@@ -13,7 +13,10 @@ export default function ChatPanel({ messages, mySocketId, onSend, onClose }: Cha
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+    const reduce =
+      typeof window !== 'undefined' &&
+      window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
+    bottomRef.current?.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth' });
   }, [messages]);
 
   function submit(e: React.FormEvent) {
@@ -31,7 +34,7 @@ export default function ChatPanel({ messages, mySocketId, onSend, onClose }: Cha
         <button onClick={onClose} className="chat__close" aria-label="Close chat">✕</button>
       </div>
 
-      <div className="chat__list">
+      <div className="chat__list" aria-live="polite" aria-relevant="additions">
         {messages.length === 0 && (
           <p className="chat__empty">Say hello to start the conversation.</p>
         )}
@@ -53,7 +56,9 @@ export default function ChatPanel({ messages, mySocketId, onSend, onClose }: Cha
         <input
           value={text}
           onChange={(e) => setText(e.target.value)}
-          placeholder="Send a message"
+          placeholder="Send a message…"
+          name="message"
+          autoComplete="off"
           className="chat__input"
           aria-label="Message"
         />

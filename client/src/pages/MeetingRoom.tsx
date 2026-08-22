@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useSocket } from '../hooks/useSocket';
 import { PeerConnectionManager } from '../rtc/PeerConnectionManager';
 import VideoTile from '../components/VideoTile';
 import ControlsBar from '../components/ControlsBar';
 import ChatPanel from '../components/ChatPanel';
+import ConfirmDialog from '../components/ConfirmDialog';
 import type { ChatMessage, MediaState, Participant } from '../types';
 import { normalizeRoomId } from '../lib/roomCode';
 import { computeTileLayout } from '../lib/tileLayout';
@@ -24,6 +25,10 @@ function getDisplayName(): string {
   return localStorage.getItem(NAME_KEY) ?? 'Guest';
 }
 
+function pluralParticipants(n: number): string {
+  return new Intl.PluralRules('en').select(n) === 'one' ? 'participant' : 'participants';
+}
+
 export default function MeetingRoom() {
   const rawRoomId = useParams().roomId ?? '';
   const roomId = normalizeRoomId(rawRoomId);
@@ -41,12 +46,23 @@ export default function MeetingRoom() {
   const [micOn, setMicOn] = useState(true);
   const [cameraOn, setCameraOn] = useState(true);
   const [screenSharing, setScreenSharing] = useState(false);
-  const [chatOpen, setChatOpen] = useState(false);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [chatOpen, setChatOpen] = useState(() => searchParams.get('chat') === '1');
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [joined, setJoined] = useState(false);
   const [error, setError] = useState('');
   const [connError, setConnError] = useState('');
   const [raisedHands, setRaisedHands] = useState<Set<string>>(new Set());
+  const [confirmLeave, setConfirmLeave] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [gateError, setGateError] = useState('');
+  const [autoFocusName] = useState(
+    () =>
+      typeof window !== 'undefined'
+        ? window.matchMedia?.('(pointer: fine) and (min-width: 768px)')?.matches ?? false
+        : false,
+  );
+  const gateErrorRef = useRef<HTMLParagraphElement>(null);
 
   const rtcRef = useRef<PeerConnectionManager | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
@@ -104,6 +120,37 @@ export default function MeetingRoom() {
     };
   }, [joined, chatOpen]);
 
+  // Keep chat open/closed state in the URL so it survives reloads and shares.
+  useEffect(() => {
+    const next = new URLSearchParams(searchParams);
+    if (chatOpen) next.set('chat', '1');
+    else next.delete('chat');
+    if (next.toString() !== searchParams.toString()) {
+      setSearchParams(next, { replace: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chatOpen]);
+
+  // Reflect the meeting in the document title and theme color so browser tabs,
+  // mobile address bars, and PWAs show the correct context. Only applies once
+  // we're past the name gate, since the gate itself uses a light surface.
+  useEffect(() => {
+    if (!nameReady) return;
+    document.title = `Meeting ${roomId}`;
+    const meta = document.querySelector('meta[name="theme-color"]');
+    const prev = meta?.getAttribute('content') ?? null;
+    meta?.setAttribute('content', '#202124');
+    return () => {
+      meta?.setAttribute('content', prev ?? '#ffffff');
+      document.title = 'Meet Clone';
+    };
+  }, [roomId, nameReady]);
+
+  // Surface gate validation errors to assistive tech and keyboard focus.
+  useEffect(() => {
+    if (gateError) gateErrorRef.current?.focus();
+  }, [gateError]);
+
 
   const getMedia = useCallback(async (video: boolean, audio: boolean): Promise<MediaStream | null> => {
     try {
@@ -111,8 +158,8 @@ export default function MeetingRoom() {
     } catch (err) {
       const name = (err as DOMException)?.name;
       if (name === 'NotAllowedError') setError('Camera/mic permission denied. Check browser settings.');
-      else if (name === 'NotFoundError') setError('No camera or microphone found.');
-      else setError('Could not access media devices.');
+      else if (name === 'NotFoundError') setError('No camera or microphone found. Connect one and reload.');
+      else setError('Could not access media devices. Check permissions and reload.');
       return null;
     }
   }, []);
@@ -386,17 +433,26 @@ export default function MeetingRoom() {
   function submitName(e: React.FormEvent) {
     e.preventDefault();
     const trimmed = nameInput.trim();
-    if (!trimmed) return;
+    if (!trimmed) {
+      setGateError('Please enter your name to join.');
+      return;
+    }
+    setGateError('');
     localStorage.setItem(NAME_KEY, trimmed);
     setDisplayName(trimmed);
     setNameReady(true);
   }
 
-  function leaveRoom() {
-    navigatedAwayRef.current = true;
+  function cleanupMedia() {
     rtcRef.current?.closeAll();
     localStreamRef.current?.getTracks().forEach((t) => t.stop());
     socket.disconnect();
+  }
+
+  function leaveRoom() {
+    navigatedAwayRef.current = true;
+    cleanupMedia();
+    setConfirmLeave(false);
     navigate('/');
   }
 
@@ -406,7 +462,10 @@ export default function MeetingRoom() {
 
   function copyInvite() {
     navigator.clipboard?.writeText(`${window.location.origin}/room/${roomId}`).then(
-      () => undefined,
+      () => {
+        setCopied(true);
+        window.setTimeout(() => setCopied(false), 2000);
+      },
       () => undefined,
     );
   }
@@ -536,7 +595,7 @@ export default function MeetingRoom() {
 
   if (!nameReady) {
     return (
-      <div className="namegate">
+      <main id="main-content" className="namegate">
         <div className="namegate__card">
           <div className="brand namegate__brand">
             <span className="brand__mark" aria-hidden="true">
@@ -547,30 +606,38 @@ export default function MeetingRoom() {
             </span>
             <span className="brand__name">Meet Clone</span>
           </div>
-          <h1 className="namegate__title">Join the meeting</h1>
+          <h1 className="namegate__title">Join the Meeting</h1>
           <p className="namegate__sub">Enter your name so others know who you are.</p>
           <form onSubmit={submitName} className="namegate__form" noValidate>
             <label htmlFor="gate-name" className="field-label">Your name</label>
             <input
               id="gate-name"
+              name="name"
               value={nameInput}
-              onChange={(e) => setNameInput(e.target.value)}
+              onChange={(e) => {
+                setNameInput(e.target.value);
+                setGateError('');
+              }}
               placeholder="Jane Doe"
               autoComplete="name"
-              autoFocus
+              autoFocus={autoFocusName}
               className="text-input"
             />
-            <button type="submit" className="btn btn-primary namegate__submit" disabled={!nameInput.trim()}>
-              Join meeting
+            {gateError && (
+              <p className="form-error" role="alert" ref={gateErrorRef} tabIndex={-1}>{gateError}</p>
+            )}
+            <button type="submit" className="btn btn-primary namegate__submit">
+              Join Meeting
             </button>
           </form>
         </div>
-      </div>
+      </main>
     );
   }
 
   return (
-    <div className="call">
+    <main id="main-content" className="call">
+      <h1 className="visually-hidden">{`Meeting ${roomId}`}</h1>
       <div className="call__main">
         <div className="call__stage" ref={stageRef}>
           {!joined && !error && !connError && (
@@ -579,13 +646,13 @@ export default function MeetingRoom() {
           {connError && (
             <div className="call__error">
               <p className="call__error-text">{connError}</p>
-              <button onClick={() => navigate('/')} className="btn btn-primary">Go home</button>
+              <Link to="/" className="btn btn-primary" onClick={cleanupMedia}>Go Home</Link>
             </div>
           )}
           {error && (
             <div className="call__error">
               <p className="call__error-text">{error}</p>
-              <button onClick={() => navigate('/')} className="btn btn-primary">Go home</button>
+              <Link to="/" className="btn btn-primary" onClick={cleanupMedia}>Go Home</Link>
             </div>
           )}
           {joined && (
@@ -607,11 +674,14 @@ export default function MeetingRoom() {
       <div className="call__footer">
         <div className="call__meta">
           <span className="call__room">
-            Meeting: <strong>{roomId}</strong>
+            Meeting: <strong translate="no">{roomId}</strong>
           </span>
-          <button onClick={copyInvite} className="call__copy">Copy invite</button>
+          <button onClick={copyInvite} className="call__copy">
+            {copied ? 'Copied' : 'Copy Invite'}
+          </button>
+          <span className="visually-hidden" aria-live="polite">{copied ? 'Invite link copied to clipboard' : ''}</span>
           <span className="call__count">
-            {participantCount} participant{participantCount === 1 ? '' : 's'}
+            {participantCount} {pluralParticipants(participantCount)}
           </span>
         </div>
         <ControlsBar
@@ -623,9 +693,18 @@ export default function MeetingRoom() {
           onToggleCamera={toggleCamera}
           onToggleScreenShare={toggleScreenShare}
           onToggleChat={() => setChatOpen((v) => !v)}
-          onLeave={leaveRoom}
+          onLeave={() => setConfirmLeave(true)}
         />
       </div>
-    </div>
+      <ConfirmDialog
+        open={confirmLeave}
+        title="Leave Meeting?"
+        message="You'll be disconnected from this call. You can rejoin with the same link."
+        confirmLabel="Leave"
+        cancelLabel="Stay"
+        onConfirm={leaveRoom}
+        onCancel={() => setConfirmLeave(false)}
+      />
+    </main>
   );
 }

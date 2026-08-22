@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useSocket } from '../hooks/useSocket';
 import { normalizeRoomId, isValidRoomId } from '../lib/roomCode';
@@ -10,6 +10,12 @@ export default function HomePage() {
   const [name, setName] = useState(() => localStorage.getItem('meet_name') ?? '');
   const [error, setError] = useState('');
   const [creating, setCreating] = useState(false);
+  const errorRef = useRef<HTMLParagraphElement>(null);
+
+  // Move focus to the first error so keyboard and screen-reader users find it.
+  useEffect(() => {
+    if (error) errorRef.current?.focus();
+  }, [error]);
 
   // Persist the display name so it survives reloads and room changes.
   useEffect(() => {
@@ -38,7 +44,7 @@ export default function HomePage() {
       return;
     }
     if (!isValidRoomId(roomId)) {
-      setError('That code looks invalid. Format is like "abc-defg-hij".');
+      setError('That code looks invalid. Format is like “abc-defg-hij”.');
       return;
     }
     navigate(`/room/${roomId}`);
@@ -60,10 +66,10 @@ export default function HomePage() {
         </div>
       </header>
 
-      <main className="home__body">
+      <main id="main-content" className="home__body">
         <section className="home__intro">
           <span className="home__eyebrow">WebRTC video calls</span>
-          <h1>Premium video meetings for everyone</h1>
+          <h1>Premium Video Meetings for Everyone</h1>
           <p className="home__sub">
             Secure, real-time, peer-to-peer video calls — right in your browser. No
             plugins, no installs, no waiting.
@@ -98,6 +104,7 @@ export default function HomePage() {
             </label>
             <input
               id="meeting-code"
+              name="meeting-code"
               value={code}
               onChange={(e) => {
                 setCode(e.target.value);
@@ -115,6 +122,7 @@ export default function HomePage() {
             </label>
             <input
               id="display-name"
+              name="name"
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder="Jane Doe"
@@ -122,7 +130,7 @@ export default function HomePage() {
               className="text-input"
             />
 
-            {error && <p className="form-error" role="alert">{error}</p>}
+            {error && <p className="form-error" role="alert" ref={errorRef} tabIndex={-1}>{error}</p>}
 
             <div className="home__actions">
               <button type="submit" className="btn btn-primary">Join</button>
@@ -132,7 +140,8 @@ export default function HomePage() {
                 disabled={creating}
                 className="btn btn-secondary"
               >
-                {creating ? 'Creating…' : 'New meeting'}
+                {creating && <span className="spinner" aria-hidden="true" />}
+                {creating ? 'Creating…' : 'New Meeting'}
               </button>
             </div>
           </form>

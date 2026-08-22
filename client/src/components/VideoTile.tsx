@@ -60,6 +60,8 @@ export default function VideoTile({
         muted={isLocal}
         className="tile__video"
         style={{ transform: isSelfView ? 'scaleX(-1)' : undefined }}
+        aria-label={cameraOn && stream ? name : undefined}
+        aria-hidden={cameraOn && stream ? undefined : true}
       />
 
       {showAvatar && (
@@ -93,7 +95,7 @@ export default function VideoTile({
 
 function MicOffIcon() {
   return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true" focusable="false">
       <path d="M12 14a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v5a3 3 0 0 0 3 3Z" fill="#f28b82" />
       <path d="M17.7 11a5.7 5.7 0 0 1-1.3 3.6M5.6 11a6.4 6.4 0 0 0 9.7 5.4M12 17.5V21" stroke="#f28b82" strokeWidth="1.6" strokeLinecap="round" />
       <path d="m4 4 16 16" stroke="#f28b82" strokeWidth="1.6" strokeLinecap="round" />
@@ -103,7 +105,7 @@ function MicOffIcon() {
 
 function CamOffIcon() {
   return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true" focusable="false">
       <rect x="3" y="6" width="13" height="12" rx="2" fill="#f28b82" />
       <path d="M16 10 22 7v10l-6-3" fill="#f28b82" />
       <path d="m4 4 16 16" stroke="#202124" strokeWidth="2" strokeLinecap="round" />
