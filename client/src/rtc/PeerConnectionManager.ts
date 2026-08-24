@@ -130,6 +130,34 @@ export class PeerConnectionManager {
     return this.peers.size;
   }
 
+  /**
+   * Worst-case peer-to-peer round-trip time across all connected peers, in ms.
+   * Reads the selected ICE candidate pair's currentRoundTripTime from
+   * getStats(). Returns null when no peer has a measurable RTT yet.
+   */
+  async getLatencyMs(): Promise<number | null> {
+    let max: number | null = null;
+    for (const pc of this.peers.values()) {
+      try {
+        const stats = await pc.getStats();
+        stats.forEach((report) => {
+          if (report.type !== 'candidate-pair') return;
+          const pair = report as RTCStats & {
+            currentRoundTripTime?: number;
+            state?: string;
+          };
+          if (typeof pair.currentRoundTripTime !== 'number') return;
+          if (pair.state && pair.state !== 'succeeded') return;
+          const ms = pair.currentRoundTripTime * 1000;
+          if (max === null || ms > max) max = ms;
+        });
+      } catch {
+        // ignore a failing peer connection
+      }
+    }
+    return max === null ? null : Math.round(max);
+  }
+
   private async renegotiate(peerSocketId: string, pc: RTCPeerConnection): Promise<void> {
     try {
       const offer = await pc.createOffer();

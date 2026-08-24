@@ -39,6 +39,7 @@ export interface ClientToServerEvents {
   'chat-message': (payload: { roomId: string; text: string }) => void;
   'media-state': (payload: { to: string; state: MediaState }) => void;
   'raise-hand': (payload: { roomId: string }) => void;
+  'latency:probe': (cb: () => void) => void;
 }
 
 /** Events the server emits to the client. */

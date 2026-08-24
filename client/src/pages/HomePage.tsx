@@ -9,12 +9,40 @@ export default function HomePage() {
   const [code, setCode] = useState('');
   const [error, setError] = useState('');
   const [creating, setCreating] = useState(false);
+  const [latency, setLatency] = useState<number | null>(null);
   const errorRef = useRef<HTMLParagraphElement>(null);
 
   // Move focus to the first error so keyboard and screen-reader users find it.
   useEffect(() => {
     if (error) errorRef.current?.focus();
   }, [error]);
+
+  // Measure round-trip time to the signaling server for the live HUD readout.
+  useEffect(() => {
+    let active = true;
+    const measure = () => {
+      const start = Date.now();
+      let done = false;
+      const fail = window.setTimeout(() => {
+        if (!done && active) {
+          done = true;
+          setLatency(null);
+        }
+      }, 3000);
+      socket.emit('latency:probe', () => {
+        if (done) return;
+        done = true;
+        window.clearTimeout(fail);
+        if (active) setLatency(Date.now() - start);
+      });
+    };
+    measure();
+    const id = window.setInterval(measure, 5000);
+    return () => {
+      active = false;
+      window.clearInterval(id);
+    };
+  }, [socket]);
 
   function createRoom() {
     setError('');
@@ -121,10 +149,10 @@ export default function HomePage() {
 
       <footer className="home__footer">
         <div className="home__footer-brand">© 2024 UPLINK SYSTEMS</div>
-        <div className="home__footer-stats" aria-hidden="true">
-          <span>LATENCY: 12ms</span>
-          <span>ENCRYPTION: AES-256-GCM</span>
-          <span>STATUS: NOMINAL</span>
+        <div className="home__footer-stats">
+          <span>LATENCY: {latency == null ? '--' : `${latency}ms`}</span>
+          <span aria-hidden="true">ENCRYPTION: AES-256-GCM</span>
+          <span aria-hidden="true">STATUS: NOMINAL</span>
         </div>
       </footer>
     </div>

@@ -151,7 +151,7 @@ by a command bar.
 │ └──────────────────────────────────┘ │ │ > HANDSHAKE: SUCCESS││
 │ > [enter command]   /mute /cam /exit  │ │ > live event log…   ││
 ├──────────────────────────────────────┴─┴──────────────────────┘│
-│ © 2142 UPLINK_CORE      ENCRYPTION · NODES: n · STATUS: NOMINAL│
+│ © 2142 UPLINK_CORE      LATENCY · NODES: n · ENCRYPTION│
 └──────────────────────────────────────────────────────────────┘
 (* chat icon only on mobile)
 ```
@@ -191,6 +191,14 @@ COMPLETE`, `NEW_NODE uplink`, `NODE dropped`, each command run, and uplink
 errors. Capped to the last 80 lines, auto-scrolled.
 
 ---
+
+### Latency readout
+
+The `LATENCY` readout is a real measured value, not static flavor. The landing
+page measures round-trip time to the signaling server via a `latency:probe`
+socket echo (every 5s; `--` when unreachable). The call screen measures
+worst-case peer-to-peer RTT via WebRTC `getStats()` (selected ICE candidate-
+pair `currentRoundTripTime`, every 5s; `--` until a peer connects).
 
 ## 7. Component → behaviour mapping
 

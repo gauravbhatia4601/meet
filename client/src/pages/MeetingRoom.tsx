@@ -73,6 +73,7 @@ export default function MeetingRoom() {
   const [raisedHands, setRaisedHands] = useState<Set<string>>(new Set());
   const [confirmLeave, setConfirmLeave] = useState(false);
   const [gateError, setGateError] = useState('');
+  const [latency, setLatency] = useState<number | null>(null);
   const [logs, setLogs] = useState<LogEntry[]>([
     { id: 0, text: '> ENCRYPTION: ACTIVE', level: 'ok' },
     { id: 1, text: '> HANDSHAKE: SUCCESS', level: 'ok' },
@@ -166,6 +167,22 @@ export default function MeetingRoom() {
   useEffect(() => {
     if (gateError) gateErrorRef.current?.focus();
   }, [gateError]);
+
+  // Measure peer-to-peer latency (worst-case RTT) for the HUD readout.
+  useEffect(() => {
+    if (!joined) return;
+    let active = true;
+    const measure = async () => {
+      const ms = (await rtcRef.current?.getLatencyMs()) ?? null;
+      if (active) setLatency(ms);
+    };
+    void measure();
+    const id = window.setInterval(measure, 5000);
+    return () => {
+      active = false;
+      window.clearInterval(id);
+    };
+  }, [joined]);
 
 
   const getMedia = useCallback(async (video: boolean, audio: boolean): Promise<MediaStream | null> => {
@@ -685,9 +702,9 @@ export default function MeetingRoom() {
           <footer className="call__foot">
             <span>© 2142 UPLINK_CORE</span>
             <div className="call__foot-stats">
-              <span>ENCRYPTION: AES-256</span>
+              <span>LATENCY: {latency == null ? '--' : `${latency}ms`}</span>
               <span>NODES: {nodeCount}</span>
-              <span>STATUS: NOMINAL</span>
+              <span>ENCRYPTION: AES-256</span>
             </div>
           </footer>
         </div>

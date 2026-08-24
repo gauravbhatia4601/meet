@@ -220,6 +220,12 @@ io.on('connection', (socket: Socket) => {
     io.to(roomId).emit('raise-hand', { from: socket.id });
   });
 
+  // Latency probe: echo back immediately so the client can measure round-trip
+  // time to the signaling server (shown as the live LATENCY readout).
+  socket.on('latency:probe', (cb) => {
+    cb?.();
+  });
+
   socket.on('disconnecting', () => {
     const room = roomManager.leaveRoom(socket.id);
     if (room) {
