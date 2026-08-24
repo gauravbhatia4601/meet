@@ -75,6 +75,8 @@ export default function MeetingRoom() {
   const [confirmLeave, setConfirmLeave] = useState(false);
   const [gateError, setGateError] = useState('');
   const [latency, setLatency] = useState<number | null>(null);
+  const [mediaError, setMediaError] = useState('');
+  const [micLevel, setMicLevel] = useState(0);
   const [toast, setToast] = useState<{ id: number; text: string } | null>(null);
   const [logs, setLogs] = useState<LogEntry[]>([
     { id: 0, text: '> ENCRYPTION: ACTIVE', level: 'ok' },
@@ -98,6 +100,10 @@ export default function MeetingRoom() {
   const cameraOnRef = useRef(true);
   const navigatedAwayRef = useRef(false);
   const peersRef = useRef<Map<string, PeerState>>(new Map());
+  const previewVideoRef = useRef<HTMLVideoElement>(null);
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const rafRef = useRef<number | null>(null);
 
   const pushLog = useCallback((text: string, level?: LogLevel) => {
     setLogs((prev) => [...prev, { id: logIdRef.current++, text, level }].slice(-80));
@@ -110,6 +116,47 @@ export default function MeetingRoom() {
     toastTimerRef.current = window.setTimeout(() => setToast(null), 2500);
   }, []);
 
+  const stopMicMeter = useCallback(() => {
+    if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    rafRef.current = null;
+    if (audioCtxRef.current) {
+      audioCtxRef.current.close().catch(() => {});
+      audioCtxRef.current = null;
+    }
+    analyserRef.current = null;
+    setMicLevel(0);
+  }, []);
+
+  const startMicMeter = useCallback((stream: MediaStream) => {
+    stopMicMeter();
+    const audioTrack = stream.getAudioTracks()[0];
+    if (!audioTrack) return;
+    try {
+      const ctx = new AudioContext();
+      const src = ctx.createMediaStreamSource(new MediaStream([audioTrack]));
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 512;
+      src.connect(analyser);
+      audioCtxRef.current = ctx;
+      analyserRef.current = analyser;
+      const data = new Uint8Array(analyser.frequencyBinCount);
+      const loop = () => {
+        analyser.getByteTimeDomainData(data);
+        let sum = 0;
+        for (let i = 0; i < data.length; i++) {
+          const v = (data[i] - 128) / 128;
+          sum += v * v;
+        }
+        const rms = Math.sqrt(sum / data.length);
+        setMicLevel(Math.min(1, rms * 2.5));
+        rafRef.current = requestAnimationFrame(loop);
+      };
+      loop();
+    } catch {
+      // AudioContext unavailable; meter stays at 0.
+    }
+  }, [stopMicMeter]);
+
   useEffect(() => {
     sysLogsRef.current?.scrollTo({ top: sysLogsRef.current.scrollHeight });
   }, [logs]);
@@ -117,6 +164,66 @@ export default function MeetingRoom() {
   useEffect(() => {
     peersRef.current = peers;
   }, [peers]);
+
+  // Acquire camera + mic once, on mount, so the pre-join lobby can preview them
+  // and the user can enable/disable each before connecting. The same stream is
+  // reused by the call, so the lobby choices carry straight into the meeting.
+  useEffect(() => {
+    let cancelled = false;
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setMediaError('Camera/mic not available in this browser. You can still join without media.');
+      setMicOn(false);
+      setCameraOn(false);
+      micOnRef.current = false;
+      cameraOnRef.current = false;
+      return;
+    }
+    navigator.mediaDevices
+      .getUserMedia({ video: true, audio: true })
+      .then((stream) => {
+        if (cancelled) {
+          stream.getTracks().forEach((t) => t.stop());
+          return;
+        }
+        localStreamRef.current = stream;
+        setLocalStream(stream);
+        setMicOn(true);
+        setCameraOn(true);
+        micOnRef.current = true;
+        cameraOnRef.current = true;
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        const name = (err as DOMException)?.name;
+        if (name === 'NotAllowedError') setMediaError('Camera/mic permission denied — you can still join without media.');
+        else if (name === 'NotFoundError') setMediaError('No camera or microphone found — you can still join without media.');
+        else setMediaError('Could not access camera/mic — you can still join without media.');
+        setMicOn(false);
+        setCameraOn(false);
+        micOnRef.current = false;
+        cameraOnRef.current = false;
+      });
+    return () => {
+      cancelled = true;
+      // Release hardware on a real unmount (leaving the page). The gate -> call
+      // flip does NOT unmount this component, so the stream survives into the call.
+      localStreamRef.current?.getTracks().forEach((t) => t.stop());
+    };
+  }, []);
+
+  // Mic level meter — only in the pre-join lobby, with the mic on.
+  useEffect(() => {
+    if (nameReady || !micOn || !localStream) return;
+    startMicMeter(localStream);
+    return () => stopMicMeter();
+  }, [nameReady, micOn, localStream, startMicMeter, stopMicMeter]);
+
+  // Attach the preview stream to the lobby video element.
+  useEffect(() => {
+    const el = previewVideoRef.current;
+    if (!el) return;
+    el.srcObject = cameraOn && localStream ? localStream : null;
+  }, [cameraOn, localStream]);
 
   // Surface signaling-server connection failures instead of hanging on the
   // "Establishing uplink…" state.
@@ -206,17 +313,15 @@ export default function MeetingRoom() {
     }
   }, []);
 
-  // Setup: join the room and acquire local media. Runs only after the user has
-  // provided a display name (either from a stored value or the name gate).
+  // Setup: join the room. Local media was acquired on mount for the pre-join
+  // lobby, so we reuse it (with whatever mic/camera choices were made there).
   useEffect(() => {
     if (!nameReady) return;
     let cancelled = false;
 
     async function init() {
-      const stream = await getMedia(true, true);
+      const stream = localStreamRef.current ?? new MediaStream();
       if (cancelled) return;
-      if (!stream) return;
-
       localStreamRef.current = stream;
       setLocalStream(stream);
 
@@ -473,6 +578,7 @@ export default function MeetingRoom() {
       return;
     }
     setGateError('');
+    setError('');
     localStorage.setItem(NAME_KEY, trimmed);
     setDisplayName(trimmed);
     setNameReady(true);
@@ -595,6 +701,7 @@ export default function MeetingRoom() {
   );
 
   if (!nameReady) {
+    const mediaReady = !!localStream || !!mediaError;
     return (
       <main id="main-content" className="namegate">
         <div className="namegate__card terminal-border">
@@ -608,7 +715,44 @@ export default function MeetingRoom() {
             <span className="brand__name">Uplink</span>
           </div>
           <h1 className="namegate__title">Establish Uplink</h1>
-          <p className="namegate__sub">Enter your callsign so others can identify you.</p>
+          <p className="namegate__sub">Check your uplink, then connect.</p>
+
+          <div className="gate__preview terminal-border">
+            <video ref={previewVideoRef} className="gate__video" autoPlay playsInline muted />
+            {(!cameraOn || !localStream) && (
+              <div className="gate__placeholder">{cameraOn ? 'AWAITING_SIGNAL' : 'CAM_OFF'}</div>
+            )}
+            {cameraOn && localStream && <div className="gate__hud">PREVIEW</div>}
+            {micOn && localStream && (
+              <div className="gate__meter" aria-hidden="true">
+                <div className="gate__meter-fill" style={{ transform: `scaleX(${micLevel})` }} />
+              </div>
+            )}
+          </div>
+
+          <div className="gate__toggles">
+            <button
+              type="button"
+              className={`gate__toggle${micOn ? ' gate__toggle--on' : ''}`}
+              onClick={() => void toggleMic()}
+              disabled={!mediaReady}
+              aria-pressed={micOn}
+            >
+              {micOn ? 'MIC ON' : 'MIC OFF'}
+            </button>
+            <button
+              type="button"
+              className={`gate__toggle${cameraOn ? ' gate__toggle--on' : ''}`}
+              onClick={() => void toggleCamera()}
+              disabled={!mediaReady}
+              aria-pressed={cameraOn}
+            >
+              {cameraOn ? 'CAM ON' : 'CAM OFF'}
+            </button>
+          </div>
+
+          {mediaError && <p className="form-error" role="alert">{mediaError}</p>}
+
           <form onSubmit={submitName} className="namegate__form" noValidate>
             <label htmlFor="gate-name" className="field-label">Callsign</label>
             <input
@@ -627,7 +771,7 @@ export default function MeetingRoom() {
             {gateError && (
               <p className="form-error" role="alert" ref={gateErrorRef} tabIndex={-1}>{gateError}</p>
             )}
-            <button type="submit" className="btn btn-primary namegate__submit">
+            <button type="submit" className="btn btn-primary namegate__submit" disabled={!nameInput.trim() || !mediaReady}>
               Connect
             </button>
           </form>
