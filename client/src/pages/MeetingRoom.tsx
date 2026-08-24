@@ -59,9 +59,9 @@ export default function MeetingRoom() {
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
   const [peers, setPeers] = useState<Map<string, PeerState>>(new Map());
   const [hostId, setHostId] = useState<string | null>(null);
-  const [displayName, setDisplayName] = useState(getDisplayName);
-  const [nameInput, setNameInput] = useState(getDisplayName);
-  const [nameReady, setNameReady] = useState(() => !!getDisplayName().trim());
+  const [displayName, setDisplayName] = useState(() => localStorage.getItem(NAME_KEY) ?? '');
+  const [nameInput, setNameInput] = useState(() => localStorage.getItem(NAME_KEY) ?? '');
+  const [nameReady, setNameReady] = useState(false);
   const [micOn, setMicOn] = useState(true);
   const [cameraOn, setCameraOn] = useState(true);
   const [screenSharing, setScreenSharing] = useState(false);

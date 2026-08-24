@@ -1448,7 +1448,7 @@ a {
 .toast {
   position: fixed;
   left: 50%;
-  bottom: 76px;
+  top: 60px;
   transform: translateX(-50%);
   z-index: 90;
   background: #000;
@@ -1464,7 +1464,7 @@ a {
   animation: toast-in 0.15s ease;
 }
 @keyframes toast-in {
-  from { opacity: 0; transform: translate(-50%, 8px); }
+  from { opacity: 0; transform: translate(-50%, -8px); }
   to { opacity: 1; transform: translate(-50%, 0); }
 }
 
@@ -1531,3 +1531,4 @@ a {
   text-transform: uppercase;
   letter-spacing: 0.1em;
 }
+.cmdbar__suggest-item--active { background: var(--primary-soft); }
