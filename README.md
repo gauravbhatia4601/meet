@@ -211,6 +211,8 @@ with symmetric NATs (common on mobile/cellular), TURN is required.
 | `CLOUDFLARE_TURN_TOKEN_ID` | *(empty)* | Cloudflare Calls TURN token ID |
 | `CLOUDFLARE_TURN_API_TOKEN` | *(empty)* | Cloudflare Calls API token |
 | `CLOUDFLARE_TURN_TTL` | `86400` | TURN credential lifetime in seconds |
+| `REDIS_URL` | *(empty)* | Redis URL for room persistence (rejoin after empty/restart). Empty = in-memory |
+| `ROOM_TTL_SECONDS` | `604800` | How long a meeting code stays valid after the last person leaves (7 days) |
 
 ## Architecture
 

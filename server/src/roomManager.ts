@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { createRoomStore, type RoomStore } from './roomStore.js';
 
 export interface Participant {
   id: string;
@@ -14,14 +15,26 @@ export interface Room {
   hostId: string | null;
 }
 
+const DEFAULT_TTL_SECONDS = 604800; // 7 days — a code stays valid this long.
+
 /**
- * In-memory room store. For horizontal scaling across multiple server
- * instances this should be replaced with a shared store (Redis/pub-sub).
- * Each entry is keyed by socketId -> roomId to enable fast lookups.
+ * Room state is split in two:
+ *
+ *  - Persisted record (RoomStore / Redis): keeps a meeting code valid even when
+ *    nobody is connected, so a link can be reopened later (like Google Meet).
+ *  - Live participants (in-memory here): who's connected right now. This is
+ *    transient and per-socket; it goes away on disconnect.
+ *
+ * On join, if the live room isn't in memory (server restarted, or the call had
+ * emptied), we recreate it from the persisted record — so rejoining a code that
+ * currently has nobody in it still works. The record's TTL is refreshed on
+ * every join so an active meeting never expires.
  */
 class RoomManager {
   private rooms = new Map<string, Room>();
   private socketToRoom = new Map<string, string>();
+
+  constructor(private store: RoomStore, private ttlSeconds: number) {}
 
   getRoom(roomId: string): Room | undefined {
     return this.rooms.get(roomId);
@@ -36,20 +49,24 @@ class RoomManager {
     return this.socketToRoom.get(socketId) ?? null;
   }
 
-  createRoom(): string {
+  /** Create a new meeting code and persist it. No live room is created yet —
+   *  that happens on the first join, which avoids orphaned empty rooms. */
+  async createRoom(): Promise<string> {
     const roomId = this.generateRoomId();
-    this.rooms.set(roomId, {
-      id: roomId,
-      createdAt: Date.now(),
-      participants: new Map(),
-      hostId: null,
-    });
+    await this.store.set(roomId, { id: roomId, createdAt: Date.now() }, this.ttlSeconds);
     return roomId;
   }
 
-  joinRoom(roomId: string, socketId: string, displayName: string): Room | null {
-    const room = this.rooms.get(roomId);
-    if (!room) return null;
+  async joinRoom(roomId: string, socketId: string, displayName: string): Promise<Room | null> {
+    let room = this.rooms.get(roomId);
+    if (!room) {
+      // Live room absent (rejoin after empty / server restart): rebuild it
+      // from the persisted record. If there's no record, the code is invalid.
+      const record = await this.store.get(roomId);
+      if (!record) return null;
+      room = { id: record.id, createdAt: record.createdAt, participants: new Map(), hostId: null };
+      this.rooms.set(roomId, room);
+    }
 
     const participant: Participant = {
       id: randomUUID(),
@@ -60,6 +77,9 @@ class RoomManager {
     room.participants.set(socketId, participant);
     if (!room.hostId) room.hostId = socketId;
     this.socketToRoom.set(socketId, roomId);
+
+    // Keep the code alive while the meeting is active.
+    void this.store.refresh(roomId, this.ttlSeconds);
     return room;
   }
 
@@ -75,11 +95,24 @@ class RoomManager {
       room.hostId = nextHost ? nextHost.socketId : null;
     }
 
-    // Clean up empty rooms to avoid unbounded memory growth.
+    // The live session ends when empty, but the persisted code survives in the
+    // store (until its TTL) — so the same link can be reopened later.
     if (room.participants.size === 0) {
       this.rooms.delete(room.id);
     }
     return room;
+  }
+
+  /** Whether a code resolves to a valid meeting (live OR persisted). */
+  async roomExists(roomId: string): Promise<boolean> {
+    if (this.rooms.has(roomId)) return true;
+    return (await this.store.get(roomId)) !== null;
+  }
+
+  /** Permanently remove a code (e.g. host ends the meeting). */
+  async deleteRoom(roomId: string): Promise<void> {
+    this.rooms.delete(roomId);
+    await this.store.delete(roomId);
   }
 
   listParticipants(room: Room): Participant[] {
@@ -97,4 +130,6 @@ class RoomManager {
   }
 }
 
-export const roomManager = new RoomManager();
+const ttlSeconds = Number(process.env.ROOM_TTL_SECONDS ?? DEFAULT_TTL_SECONDS);
+
+export const roomManager = new RoomManager(createRoomStore(ttlSeconds), ttlSeconds);

@@ -115,19 +115,24 @@ app.get('/api/rtc-config', async (_req, res) => {
 });
 
 /** Create a new room and return its code. */
-app.post('/api/rooms', (_req, res) => {
-  const roomId = roomManager.createRoom();
+app.post('/api/rooms', async (_req, res) => {
+  const roomId = await roomManager.createRoom();
   res.status(201).json({ roomId });
 });
 
 /** Validate whether a room exists before joining. */
-app.get('/api/rooms/:roomId', (req, res) => {
-  const room = roomManager.getRoom(req.params.roomId);
-  if (!room) {
-    res.status(404).json({ error: 'Room not found' });
+app.get('/api/rooms/:roomId', async (req, res) => {
+  const live = roomManager.getRoom(req.params.roomId);
+  if (live) {
+    res.json({ roomId: live.id, participantCount: live.participants.size });
     return;
   }
-  res.json({ roomId: room.id, participantCount: room.participants.size });
+  // Not live right now, but the code may still be valid (persisted, empty call).
+  if (await roomManager.roomExists(req.params.roomId)) {
+    res.json({ roomId: req.params.roomId, participantCount: 0 });
+    return;
+  }
+  res.status(404).json({ error: 'Room not found' });
 });
 
 // Serve the built client in production so a single process serves everything.
@@ -161,9 +166,9 @@ function broadcastNewPeer(room: Room, socketId: string) {
 }
 
 io.on('connection', (socket: Socket) => {
-  socket.on('create-room', (callback) => {
+  socket.on('create-room', async (callback) => {
     try {
-      const roomId = roomManager.createRoom();
+      const roomId = await roomManager.createRoom();
       socket.data.roomId = roomId;
       callback?.({ ok: true, roomId });
     } catch (err) {
@@ -171,8 +176,8 @@ io.on('connection', (socket: Socket) => {
     }
   });
 
-  socket.on('join-room', ({ roomId, displayName }, callback) => {
-    const room = roomManager.joinRoom(roomId, socket.id, displayName);
+  socket.on('join-room', async ({ roomId, displayName }, callback) => {
+    const room = await roomManager.joinRoom(roomId, socket.id, displayName);
     if (!room) {
       callback?.({ ok: false, error: 'Room not found' });
       return;

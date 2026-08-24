@@ -28,3 +28,9 @@ services:
       CLOUDFLARE_TURN_TOKEN_ID: ${CLOUDFLARE_TURN_TOKEN_ID:-}
       CLOUDFLARE_TURN_API_TOKEN: ${CLOUDFLARE_TURN_API_TOKEN:-}
       CLOUDFLARE_TURN_TTL: ${CLOUDFLARE_TURN_TTL:-86400}
+      # --- Room persistence (Redis) ---
+      # Point at your Redis instance (e.g. the Coolify redis container).
+      # When unset, rooms are in-memory only (no rejoin after empty/restart).
+      REDIS_URL: ${REDIS_URL:-}
+      # How long a meeting code stays valid after the last person leaves (sec).
+      ROOM_TTL_SECONDS: ${ROOM_TTL_SECONDS:-604800}
