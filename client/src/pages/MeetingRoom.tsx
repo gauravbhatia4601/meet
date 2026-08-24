@@ -8,6 +8,7 @@ import ChatPanel from '../components/ChatPanel';
 import ConfirmDialog from '../components/ConfirmDialog';
 import type { ChatMessage, MediaState } from '../types';
 import { normalizeRoomId } from '../lib/roomCode';
+import { COMMANDS } from '../lib/commands';
 import { apiUrl } from '../lib/config';
 
 interface PeerState {
@@ -74,6 +75,7 @@ export default function MeetingRoom() {
   const [confirmLeave, setConfirmLeave] = useState(false);
   const [gateError, setGateError] = useState('');
   const [latency, setLatency] = useState<number | null>(null);
+  const [toast, setToast] = useState<{ id: number; text: string } | null>(null);
   const [logs, setLogs] = useState<LogEntry[]>([
     { id: 0, text: '> ENCRYPTION: ACTIVE', level: 'ok' },
     { id: 1, text: '> HANDSHAKE: SUCCESS', level: 'ok' },
@@ -99,6 +101,13 @@ export default function MeetingRoom() {
 
   const pushLog = useCallback((text: string, level?: LogLevel) => {
     setLogs((prev) => [...prev, { id: logIdRef.current++, text, level }].slice(-80));
+  }, []);
+
+  const toastTimerRef = useRef<number | null>(null);
+  const showToast = useCallback((text: string) => {
+    setToast({ id: Date.now(), text });
+    if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
+    toastTimerRef.current = window.setTimeout(() => setToast(null), 2500);
   }, []);
 
   useEffect(() => {
@@ -509,34 +518,40 @@ export default function MeetingRoom() {
       case 'unmute':
       case 'mic':
         pushLog(`> /${action.toUpperCase()} :: mic`, 'ok');
+        showToast(micOnRef.current ? 'Mic muted' : 'Mic unmuted');
         void toggleMic();
         break;
       case 'cam':
       case 'camera':
       case 'video':
         pushLog(`> /${action.toUpperCase()} :: camera`, 'ok');
+        showToast(cameraOnRef.current ? 'Camera off' : 'Camera on');
         void toggleCamera();
         break;
       case 'share':
       case 'screen':
       case 'present':
         pushLog(`> /${action.toUpperCase()} :: screen_share`, 'ok');
+        showToast(screenSharing ? 'Screen share stopped' : 'Screen share started');
         void toggleScreenShare();
         break;
       case 'hand':
       case 'raise':
         pushLog('> /HAND :: raise_hand', 'ok');
+        showToast('Hand raised');
         raiseHand();
         break;
       case 'chat':
       case 'comms':
         setChatOpen((v) => !v);
         pushLog('> /CHAT :: comms_toggle', 'ok');
+        showToast(chatOpen ? 'Chat closed' : 'Chat opened');
         break;
       case 'copy':
       case 'invite':
       case 'link':
         copyInvite();
+        showToast('Invite link copied');
         break;
       case 'exit':
       case 'leave':
@@ -547,16 +562,28 @@ export default function MeetingRoom() {
       case 'help':
       case '?':
       case 'commands':
-        pushLog('> commands: /mute /cam /share /hand /chat /copy /exit /help', 'ok');
+        pushLog(`> commands: ${COMMANDS.map((c) => c.label).join(' ')}`, 'ok');
+        showToast('Commands listed in SYS_LOGS');
         break;
       default:
         pushLog(`> ERR: unknown command /${action}`, 'error');
+        showToast(`Unknown command: /${action}`);
     }
   }
 
   const selfTileStream = localStream;
   const peerEntries = Array.from(peers.entries());
   const nodeCount = peers.size + 1;
+  const liveStatus = connError ? 'OFFLINE' : joined ? 'LIVE' : 'LINKING';
+  const callStatus = connError
+    ? 'OFFLINE'
+    : !joined
+      ? 'LINKING'
+      : peers.size === 0 || latency == null
+        ? 'STANDBY'
+        : latency >= 200
+          ? 'DEGRADED'
+          : 'NOMINAL';
 
   const chatPanel = (
     <ChatPanel
@@ -619,14 +646,14 @@ export default function MeetingRoom() {
           <span className="call__bar-icon" aria-hidden="true">
             <TerminalIcon />
           </span>
-          <span className="call__bar-title glitch-text" data-text="UPLINK_OS_v2.4">
-            UPLINK_OS_v2.4
+          <span className="call__bar-title glitch-text" data-text={`UPLINK_OS_v${__APP_VERSION__}`}>
+            {`UPLINK_OS_v${__APP_VERSION__}`}
           </span>
         </div>
         <div className="call__bar-right">
           <div className="call__status-chip">
-            <span className="live-dot" aria-hidden="true" />
-            LIVE UPLINK
+            <span className={`live-dot live-dot--${liveStatus.toLowerCase()}`} aria-hidden="true" />
+            {liveStatus === 'LIVE' ? 'LIVE UPLINK' : liveStatus}
           </div>
           {!isDesktop && (
             <button
@@ -700,11 +727,11 @@ export default function MeetingRoom() {
           <CommandBar onCommand={runCommand} />
 
           <footer className="call__foot">
-            <span>© 2142 UPLINK_CORE</span>
+            <span className="call__foot-room">ROOM: <strong translate="no">{roomId}</strong></span>
             <div className="call__foot-stats">
               <span>LATENCY: {latency == null ? '--' : `${latency}ms`}</span>
               <span>NODES: {nodeCount}</span>
-              <span>ENCRYPTION: AES-256</span>
+              <span className={`stat--${callStatus.toLowerCase()}`}>STATUS: {callStatus}</span>
             </div>
           </footer>
         </div>
@@ -732,6 +759,12 @@ export default function MeetingRoom() {
       </div>
 
       {!isDesktop && chatOpen && chatPanel}
+
+      {toast && (
+        <div className="toast" role="status" aria-live="polite" key={toast.id}>
+          {toast.text}
+        </div>
+      )}
 
       <ConfirmDialog
         open={confirmLeave}

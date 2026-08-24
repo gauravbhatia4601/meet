@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useSocket } from '../hooks/useSocket';
 import { normalizeRoomId, isValidRoomId } from '../lib/roomCode';
 
@@ -10,6 +10,7 @@ export default function HomePage() {
   const [error, setError] = useState('');
   const [creating, setCreating] = useState(false);
   const [latency, setLatency] = useState<number | null>(null);
+  const [online, setOnline] = useState(false);
   const errorRef = useRef<HTMLParagraphElement>(null);
 
   // Move focus to the first error so keyboard and screen-reader users find it.
@@ -41,6 +42,21 @@ export default function HomePage() {
     return () => {
       active = false;
       window.clearInterval(id);
+    };
+  }, [socket]);
+
+  // Track real connection state for the dynamic STATUS readout.
+  useEffect(() => {
+    const onConnect = () => setOnline(true);
+    const onDisconnect = () => setOnline(false);
+    const onConnectError = () => setOnline(false);
+    socket.on('connect', onConnect);
+    socket.on('disconnect', onDisconnect);
+    socket.on('connect_error', onConnectError);
+    return () => {
+      socket.off('connect', onConnect);
+      socket.off('disconnect', onDisconnect);
+      socket.off('connect_error', onConnectError);
     };
   }, [socket]);
 
@@ -79,12 +95,9 @@ export default function HomePage() {
       <nav className="home__nav" aria-label="Primary">
         <div className="home__brand">Uplink</div>
         <div className="home__nav-actions">
-          <button type="button" className="home__icon-btn" aria-label="Help" title="Help">
+          <Link to="/about" className="home__icon-btn" aria-label="How it works" title="How it works">
             <HelpIcon />
-          </button>
-          <button type="button" className="home__icon-btn" aria-label="Settings" title="Settings">
-            <SettingsIcon />
-          </button>
+          </Link>
         </div>
       </nav>
 
@@ -151,15 +164,16 @@ export default function HomePage() {
         <div className="home__footer-brand">© 2024 UPLINK SYSTEMS</div>
         <div className="home__footer-stats">
           <span>LATENCY: {latency == null ? '--' : `${latency}ms`}</span>
-          <span aria-hidden="true">ENCRYPTION: AES-256-GCM</span>
-          <span aria-hidden="true">STATUS: NOMINAL</span>
+          <span className={online ? 'stat--ok' : 'stat--off'}>
+            STATUS: {online ? 'ONLINE' : 'OFFLINE'}
+          </span>
         </div>
       </footer>
     </div>
   );
 }
 
-/* --- Nav icons (stroke-based, currentColor) --- */
+/* --- Nav icon (stroke-based, currentColor) --- */
 function HelpIcon() {
   return (
     <svg
@@ -176,25 +190,6 @@ function HelpIcon() {
       <circle cx="12" cy="12" r="10" />
       <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
       <line x1="12" y1="17" x2="12.01" y2="17" />
-    </svg>
-  );
-}
-
-function SettingsIcon() {
-  return (
-    <svg
-      width="24"
-      height="24"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.8"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <circle cx="12" cy="12" r="3" />
-      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
     </svg>
   );
 }
