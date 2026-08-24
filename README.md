@@ -1,7 +1,7 @@
-# Meet Clone — WebRTC Video Conferencing
+# Uplink — Secure WebRTC Video Meetings
 
-A production-ready clone of Google Meet built with React, Socket.io, and WebRTC.
-Peer-to-peer video/audio, screen sharing, chat, and media controls.
+Uplink — secure, real-time, peer-to-peer WebRTC video meetings with a terminal, command-driven UI. Built with React, Socket.io, and WebRTC.
+Peer-to-peer video/audio, screen sharing, chat, and slash-command controls — in a terminal HUD.
 
 ## Features
 
@@ -142,10 +142,10 @@ and configure these env vars:
 | ------- | ----- |
 | `NODE_ENV` | `production` |
 | `PORT` | `3001` (or the host's assigned port) |
-| `CLIENT_ORIGIN` | your Vercel app URL, e.g. `https://meet-clone.vercel.app` |
+| `CLIENT_ORIGIN` | your Vercel app URL, e.g. `https://uplink.vercel.app` |
 | `CLOUDFLARE_TURN_TOKEN_ID` / `CLOUDFLARE_TURN_API_TOKEN` | Cloudflare Calls credentials (required for public internet) |
 
-The host gives you a public HTTPS URL, e.g. `https://meet-signal.up.railway.app`.
+The host gives you a public HTTPS URL, e.g. `https://uplink-signal.up.railway.app`.
 
 **2. Deploy the client to Vercel.**
 
@@ -162,7 +162,7 @@ Set one environment variable in the Vercel dashboard
 
 | Env var | Value |
 | ------- | ----- |
-| `VITE_SERVER_URL` | your signaling server URL, e.g. `https://meet-signal.up.railway.app` |
+| `VITE_SERVER_URL` | your signaling server URL, e.g. `https://uplink-signal.up.railway.app` |
 
 `VITE_SERVER_URL` is baked into the client at build time. The client uses it for
 both the Socket.io connection and the `GET /api/rtc-config` REST call. In local
@@ -229,7 +229,7 @@ other participant (full mesh), which suits small-to-medium calls.
 ## Project Structure
 
 ```
-meet-clone/
+uplink/
 ├── Dockerfile
 ├── docker-compose.yml
 ├── server/
@@ -239,7 +239,7 @@ meet-clone/
 └── client/
     └── src/
         ├── pages/            # Home, MeetingRoom
-        ├── components/       # VideoTile, ControlsBar, ChatPanel
+        ├── components/       # VideoTile, CommandBar, ChatPanel, ConfirmDialog
         ├── rtc/              # PeerConnectionManager
         └── hooks/            # useSocket
 ```

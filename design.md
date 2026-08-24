@@ -1,4 +1,4 @@
-# Nexus // Secure_Uplink — Design System
+# Uplink // Secure Signal — Design System
 
 The visual identity for the whole project is a **terminal / hacker HUD** aesthetic:
 pure black canvas, phosphor-green type, monospace everywhere, sharp 0px corners,
@@ -98,7 +98,7 @@ The call screen carries a faint `text-shadow: 0 0 2px rgba(0,255,65,0.4)`.
 | Scanline (landing) | 120px gradient band, `opacity .2`, `scanline 8s linear infinite` | Fixed overlay, sweeps top→bottom |
 | Scanlines (call)   | static 4px stripe overlay, `mix-blend-mode: overlay`            | Fixed overlay, pointer-events none  |
 | CRT flicker   | `flicker 0.15s infinite` (opacity 0.95↔1) on `.call`                  | Subtle full-screen dim; the requested effect |
-| Glitch title  | `glitch-anim` / `glitch-anim-2` on `.glitch-text::before/::after`    | RGB-split slices on `NEXUS_OS_v2.4`          |
+| Glitch title  | `glitch-anim` / `glitch-anim-2` on `.glitch-text::before/::after`    | RGB-split slices on `UPLINK_OS_v2.4`          |
 | Blink cursor  | `blink 1s step-end infinite`                                        | Trailing `_` on the landing prompt          |
 | Live dot      | `live-pulse 1.4s` opacity + ring                                     | "LIVE UPLINK" chip                          |
 | Button hover  | `background-color / color 0.15s ease` (fill → outline)               | Terminal buttons invert to outline on hover  |
@@ -115,16 +115,16 @@ static slice is left over the title).
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│ NAV  NEXUS                              [help] [settings]    │  green bottom border
+│ NAV  UPLINK                              [help] [settings]    │  green bottom border
 ├─────────────────────────────────────────────────────────────┤
-│   NEXUS // SECURE_UPLINK          ┌─────────────────────┐   │
+│   UPLINK // SECURE_SIGNAL          ┌─────────────────────┐   │
 │   Premium video meetings for      │ > ENTER_MEETING_CODE_│   │
 │   everyone. Secure, real-time,    │  # [XXXX-XXXX-XXXX]  │   │
 │   peer-to-peer video calls.       │  [ INITIATE_LINK ]   │   │
 │                                   │   OR START_NEW_SESSION│  │
 │                                   └─────────────────────┘   │
 ├─────────────────────────────────────────────────────────────┤
-│ © 2024 NEXUS SYSTEMS INTERFACE   LATENCY · ENCRYPTION · STATUS │
+│ © 2024 UPLINK SYSTEMS   LATENCY · ENCRYPTION · STATUS │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -140,7 +140,7 @@ Two-column CRT HUD. **There are no media toggle buttons** — the call is driven
 by a command bar.
 
 ```
-┌─ NEXUS_OS_v2.4 (glitch) ─────────── ● LIVE UPLINK   [chat]* ─┐
+┌─ UPLINK_OS_v2.4 (glitch) ─────────── ● LIVE UPLINK   [chat]* ─┐
 ├──────────────────────────────────────┬───────────────────────┤
 │ ┌──────────────────────────────────┐ │ ┌─ COMMS_LINK ────────┐│
 │ │ peer  │ peer  │ peer   │ peer   │ │ │ [time] [NAME]: text ││
@@ -151,7 +151,7 @@ by a command bar.
 │ └──────────────────────────────────┘ │ │ > HANDSHAKE: SUCCESS││
 │ > [enter command]   /mute /cam /exit  │ │ > live event log…   ││
 ├──────────────────────────────────────┴─┴──────────────────────┘│
-│ © 2142 NEXUS_CORE      ENCRYPTION · NODES: n · STATUS: NOMINAL│
+│ © 2142 UPLINK_CORE      ENCRYPTION · NODES: n · STATUS: NOMINAL│
 └──────────────────────────────────────────────────────────────┘
 (* chat icon only on mobile)
 ```

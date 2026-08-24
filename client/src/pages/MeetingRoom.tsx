@@ -152,13 +152,13 @@ export default function MeetingRoom() {
   // Reflect the meeting in the document title and theme color.
   useEffect(() => {
     if (!nameReady) return;
-    document.title = `Meeting ${roomId}`;
+    document.title = `Uplink — ${roomId}`;
     const meta = document.querySelector('meta[name="theme-color"]');
     const prev = meta?.getAttribute('content') ?? null;
     meta?.setAttribute('content', '#000000');
     return () => {
       meta?.setAttribute('content', prev ?? '#000000');
-      document.title = 'Nexus // Secure_Uplink';
+      document.title = 'Uplink // Secure Signal';
     };
   }, [roomId, nameReady]);
 
@@ -561,7 +561,7 @@ export default function MeetingRoom() {
                 <path d="M15 10.5 22 6.5v11l-7-4" fill="var(--success)" />
               </svg>
             </span>
-            <span className="brand__name">Nexus</span>
+            <span className="brand__name">Uplink</span>
           </div>
           <h1 className="namegate__title">Establish Uplink</h1>
           <p className="namegate__sub">Enter your callsign so others can identify you.</p>
@@ -594,7 +594,7 @@ export default function MeetingRoom() {
 
   return (
     <main id="main-content" className="call crt-flicker">
-      <h1 className="visually-hidden">{`Meeting ${roomId}`}</h1>
+      <h1 className="visually-hidden">{`Uplink — ${roomId}`}</h1>
       <div className="scanlines" aria-hidden="true" />
 
       <header className="call__bar">
@@ -602,8 +602,8 @@ export default function MeetingRoom() {
           <span className="call__bar-icon" aria-hidden="true">
             <TerminalIcon />
           </span>
-          <span className="call__bar-title glitch-text" data-text="NEXUS_OS_v2.4">
-            NEXUS_OS_v2.4
+          <span className="call__bar-title glitch-text" data-text="UPLINK_OS_v2.4">
+            UPLINK_OS_v2.4
           </span>
         </div>
         <div className="call__bar-right">
@@ -683,7 +683,7 @@ export default function MeetingRoom() {
           <CommandBar onCommand={runCommand} />
 
           <footer className="call__foot">
-            <span>© 2142 NEXUS_CORE</span>
+            <span>© 2142 UPLINK_CORE</span>
             <div className="call__foot-stats">
               <span>ENCRYPTION: AES-256</span>
               <span>NODES: {nodeCount}</span>

@@ -49,7 +49,7 @@ export default function HomePage() {
       <div className="scanline" aria-hidden="true" />
 
       <nav className="home__nav" aria-label="Primary">
-        <div className="home__brand">Nexus</div>
+        <div className="home__brand">Uplink</div>
         <div className="home__nav-actions">
           <button type="button" className="home__icon-btn" aria-label="Help" title="Help">
             <HelpIcon />
@@ -63,7 +63,7 @@ export default function HomePage() {
       <main id="main-content" className="home__body">
         <div className="home__content">
           <div className="home__hero">
-            <h1 className="home__title">NEXUS // SECURE_UPLINK</h1>
+            <h1 className="home__title">UPLINK // SECURE_SIGNAL</h1>
             <p className="home__subtitle">
               Premium video meetings for everyone. Secure, real-time, peer-to-peer video calls.
             </p>
@@ -120,7 +120,7 @@ export default function HomePage() {
       </main>
 
       <footer className="home__footer">
-        <div className="home__footer-brand">© 2024 NEXUS SYSTEMS INTERFACE</div>
+        <div className="home__footer-brand">© 2024 UPLINK SYSTEMS</div>
         <div className="home__footer-stats" aria-hidden="true">
           <span>LATENCY: 12ms</span>
           <span>ENCRYPTION: AES-256-GCM</span>

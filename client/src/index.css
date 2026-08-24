@@ -379,7 +379,7 @@ a {
   50% { opacity: 0.4; box-shadow: 0 0 0 4px rgba(0, 255, 65, 0); }
 }
 
-/* --- Home page (Nexus terminal) --- */
+/* --- Home page (Uplink terminal) --- */
 .home {
   position: relative;
   min-height: 100vh;
