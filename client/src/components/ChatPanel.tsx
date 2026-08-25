@@ -37,7 +37,7 @@ export default function ChatPanel({ messages, mySocketId, onSend, onClose }: Cha
   return (
     <div className="chat" aria-live="polite" aria-relevant="additions">
       <div className="chat__header">
-        <span className="chat__title">COMMS_LINK</span>
+        <span className="chat__title">COMMS_LINK · E2E</span>
         <button onClick={onClose} className="chat__close" aria-label="Close chat">✕</button>
       </div>
 

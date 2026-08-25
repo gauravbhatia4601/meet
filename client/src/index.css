@@ -1570,3 +1570,55 @@ a {
 .gate__toggle:hover:not(:disabled) { background: var(--primary-soft); }
 .gate__toggle:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
 .gate__toggle:disabled { opacity: 0.5; cursor: default; }
+
+/* --- Network diagnostics console (NET_CONSOLE) --- */
+.diag {
+  position: fixed;
+  top: 60px;
+  right: 16px;
+  z-index: 85;
+  width: min(420px, 92vw);
+  max-height: 60vh;
+  background: #000;
+  display: flex;
+  flex-direction: column;
+}
+.diag__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--outline);
+  font-size: 12px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--outline);
+  background: var(--bg);
+}
+.diag__close {
+  width: 24px; height: 24px;
+  display: flex; align-items: center; justify-content: center;
+  border: 1px solid var(--outline-variant);
+  color: var(--primary); font-size: 13px; background: transparent;
+}
+.diag__close:hover { background: var(--primary-soft); }
+.diag__close:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.diag__body { padding: 8px 10px; overflow-y: auto; }
+.diag__empty { color: var(--text-muted); font-size: 12px; }
+.diag__row {
+  display: grid;
+  grid-template-columns: 1.4fr repeat(6, 1fr) 0.8fr;
+  gap: 6px;
+  align-items: center;
+  padding: 4px 0;
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  color: var(--text-secondary);
+  border-bottom: 1px dashed rgba(0, 255, 65, 0.12);
+}
+.diag__row:last-child { border-bottom: none; }
+.diag__node { color: var(--primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.diag__relay { text-align: right; text-transform: uppercase; }
+.diag__relay--relay { color: var(--warning); }
+.diag__relay--host { color: var(--primary); }
+.diag__relay--srflx { color: var(--secondary); }

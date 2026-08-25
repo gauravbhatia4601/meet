@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useSocket } from '../hooks/useSocket';
-import { PeerConnectionManager } from '../rtc/PeerConnectionManager';
+import { PeerConnectionManager, type PeerStat } from '../rtc/PeerConnectionManager';
 import VideoTile from '../components/VideoTile';
 import CommandBar from '../components/CommandBar';
 import ChatPanel from '../components/ChatPanel';
@@ -25,11 +25,25 @@ interface LogEntry {
   text: string;
   level?: LogLevel;
 }
+interface Alias {
+  name: string;
+  command: string;
+}
 
 const NAME_KEY = 'meet_name';
+const ALIAS_KEY = 'uplink_aliases';
 
 function getDisplayName(): string {
   return localStorage.getItem(NAME_KEY) ?? 'Guest';
+}
+
+function loadAliases(): Alias[] {
+  try {
+    const raw = localStorage.getItem(ALIAS_KEY);
+    return raw ? (JSON.parse(raw) as Alias[]) : [];
+  } catch {
+    return [];
+  }
 }
 
 /** Desktop layout breakpoint (matches the CSS @media in index.css). */
@@ -75,6 +89,9 @@ export default function MeetingRoom() {
   const [confirmLeave, setConfirmLeave] = useState(false);
   const [gateError, setGateError] = useState('');
   const [latency, setLatency] = useState<number | null>(null);
+  const [peerStats, setPeerStats] = useState<PeerStat[]>([]);
+  const [diagOpen, setDiagOpen] = useState(false);
+  const [aliases, setAliases] = useState<Alias[]>(loadAliases);
   const [mediaError, setMediaError] = useState('');
   const [micLevel, setMicLevel] = useState(0);
   const [toast, setToast] = useState<{ id: number; text: string } | null>(null);
@@ -92,6 +109,7 @@ export default function MeetingRoom() {
   const gateErrorRef = useRef<HTMLParagraphElement>(null);
   const sysLogsRef = useRef<HTMLDivElement>(null);
   const logIdRef = useRef(3);
+  const commandInputRef = useRef<HTMLInputElement>(null);
 
   const rtcRef = useRef<PeerConnectionManager | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
@@ -164,6 +182,15 @@ export default function MeetingRoom() {
   useEffect(() => {
     peersRef.current = peers;
   }, [peers]);
+
+  // Persist command aliases across sessions.
+  useEffect(() => {
+    try {
+      localStorage.setItem(ALIAS_KEY, JSON.stringify(aliases));
+    } catch {
+      // ignore quota / privacy-mode errors
+    }
+  }, [aliases]);
 
   // Acquire camera + mic once, on mount, so the pre-join lobby can preview them
   // and the user can enable/disable each before connecting. The same stream is
@@ -284,16 +311,20 @@ export default function MeetingRoom() {
     if (gateError) gateErrorRef.current?.focus();
   }, [gateError]);
 
-  // Measure peer-to-peer latency (worst-case RTT) for the HUD readout.
+  // Live per-peer network diagnostics (RTT/loss/jitter/bitrate/codec/relay)
+  // for the NET_CONSOLE, and the worst-case RTT for the HUD footer.
   useEffect(() => {
     if (!joined) return;
     let active = true;
     const measure = async () => {
-      const ms = (await rtcRef.current?.getLatencyMs()) ?? null;
-      if (active) setLatency(ms);
+      const stats = (await rtcRef.current?.getPeerStats()) ?? [];
+      if (!active) return;
+      setPeerStats(stats);
+      const maxRtt = stats.reduce((m, s) => (s.rttMs != null ? Math.max(m, s.rttMs) : m), 0);
+      setLatency(stats.some((s) => s.rttMs != null) ? maxRtt : null);
     };
     void measure();
-    const id = window.setInterval(measure, 5000);
+    const id = window.setInterval(measure, 2000);
     return () => {
       active = false;
       window.clearInterval(id);
@@ -364,6 +395,13 @@ export default function MeetingRoom() {
               return next;
             });
           },
+          onChat: (id, text, ts) => {
+            // E2E message received over a datachannel; attribute by sender id.
+            setMessages((prev) => [
+              ...prev,
+              { from: id, senderName: peersRef.current.get(id)?.displayName ?? '…', text, timestamp: ts },
+            ]);
+          },
         }, stream, rtcConfig);
         rtcRef.current = rtc;
         setJoined(true);
@@ -409,6 +447,8 @@ export default function MeetingRoom() {
         pushLog('> NODE dropped');
       });
 
+      // Fallback chat path: only used before datachannels are open (no peers
+      // connected yet). Once peers connect, chat goes E2E over datachannels.
       socket.on('chat-message', (msg) => {
         setMessages((prev) => [...prev, msg]);
       });
@@ -597,8 +637,20 @@ export default function MeetingRoom() {
     navigate('/');
   }
 
+  // Send chat E2E over datachannels; fall back to the signaling server only
+  // when no peer datachannel is open yet.
   function sendChat(text: string) {
-    socket.emit('chat-message', { roomId, text });
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    const sent = rtcRef.current?.sendChat(trimmed) ?? false;
+    if (sent) {
+      setMessages((prev) => [
+        ...prev,
+        { from: socket.id ?? '', senderName: displayName || getDisplayName(), text: trimmed, timestamp: Date.now() },
+      ]);
+    } else {
+      socket.emit('chat-message', { roomId, text: trimmed });
+    }
   }
 
   function copyInvite() {
@@ -618,7 +670,28 @@ export default function MeetingRoom() {
     if (!input) return;
     const lower = input.toLowerCase();
     const body = lower.startsWith('/') ? lower.slice(1) : lower;
-    const [action] = body.split(/\s+/);
+    const [actionRaw, ...args] = body.split(/\s+/);
+
+    // /alias <name> <command> — define a macro (persisted).
+    if (actionRaw === 'alias') {
+      const [name, ...cmdParts] = args;
+      const cmd = cmdParts.join(' ').trim().replace(/^\/+/, '');
+      const cleanName = (name ?? '').replace(/^\/+/, '');
+      if (!cleanName || !cmd) {
+        pushLog('> ERR: usage /alias <name> <command>', 'error');
+        showToast('Usage: /alias <name> <command>');
+        return;
+      }
+      setAliases((prev) => [...prev.filter((a) => a.name !== cleanName), { name: cleanName, command: cmd }]);
+      showToast(`Alias /${cleanName} → /${cmd}`);
+      pushLog(`> alias /${cleanName} -> /${cmd}`, 'ok');
+      return;
+    }
+
+    // Resolve one level of alias for the action.
+    const alias = aliases.find((a) => a.name === actionRaw);
+    const action = alias ? alias.command : actionRaw;
+
     switch (action) {
       case 'mute':
       case 'unmute':
@@ -659,6 +732,12 @@ export default function MeetingRoom() {
         copyInvite();
         showToast('Invite link copied');
         break;
+      case 'diag':
+      case 'net':
+        setDiagOpen((v) => !v);
+        pushLog('> /DIAG :: net_console', 'ok');
+        showToast(diagOpen ? 'Diagnostics closed' : 'Diagnostics open');
+        break;
       case 'exit':
       case 'leave':
       case 'quit':
@@ -668,14 +747,42 @@ export default function MeetingRoom() {
       case 'help':
       case '?':
       case 'commands':
-        pushLog(`> commands: ${COMMANDS.map((c) => c.label).join(' ')}`, 'ok');
+        pushLog(`> commands: ${COMMANDS.map((c) => c.label).join(' ')} /diag /alias`, 'ok');
         showToast('Commands listed in SYS_LOGS');
         break;
       default:
-        pushLog(`> ERR: unknown command /${action}`, 'error');
-        showToast(`Unknown command: /${action}`);
+        pushLog(`> ERR: unknown command /${actionRaw}`, 'error');
+        showToast(`Unknown command: /${actionRaw}`);
     }
   }
+
+  // Global operator shortcuts: "/" focuses the command bar; Alt+<key> runs a
+  // command (M=mic, C=cam, S=share, H=hand, D=diag, K=focus, X=leave).
+  useEffect(() => {
+    if (!nameReady) return;
+    function onKey(e: KeyboardEvent) {
+      const t = e.target as HTMLElement | null;
+      const typing = !!t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable);
+      if (e.key === '/' && !typing) {
+        e.preventDefault();
+        commandInputRef.current?.focus();
+        return;
+      }
+      if (e.altKey && !e.ctrlKey && !e.metaKey) {
+        switch (e.key.toLowerCase()) {
+          case 'm': e.preventDefault(); void toggleMic(); break;
+          case 'c': e.preventDefault(); void toggleCamera(); break;
+          case 's': e.preventDefault(); void toggleScreenShare(); break;
+          case 'h': e.preventDefault(); raiseHand(); break;
+          case 'd': e.preventDefault(); setDiagOpen((v) => !v); break;
+          case 'k': e.preventDefault(); commandInputRef.current?.focus(); break;
+          case 'x': e.preventDefault(); setConfirmLeave(true); break;
+        }
+      }
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  });
 
   const selfTileStream = localStream;
   const peerEntries = Array.from(peers.entries());
@@ -690,6 +797,7 @@ export default function MeetingRoom() {
         : latency >= 200
           ? 'DEGRADED'
           : 'NOMINAL';
+  const aliasSuggestions = aliases.map((a) => ({ label: `/${a.name}`, description: `alias → /${a.command}` }));
 
   const chatPanel = (
     <ChatPanel
@@ -868,7 +976,7 @@ export default function MeetingRoom() {
             )}
           </div>
 
-          <CommandBar onCommand={runCommand} />
+          <CommandBar onCommand={runCommand} aliases={aliasSuggestions} inputRef={commandInputRef} />
 
           <footer className="call__foot">
             <span className="call__foot-room">ROOM: <strong translate="no">{roomId}</strong></span>
@@ -903,6 +1011,33 @@ export default function MeetingRoom() {
       </div>
 
       {!isDesktop && chatOpen && chatPanel}
+
+      {joined && diagOpen && (
+        <div className="diag terminal-border" role="dialog" aria-label="Network diagnostics">
+          <div className="diag__header">
+            <span>NET_CONSOLE</span>
+            <button type="button" className="diag__close" onClick={() => setDiagOpen(false)} aria-label="Close diagnostics">✕</button>
+          </div>
+          <div className="diag__body">
+            {peerStats.length === 0 ? (
+              <div className="diag__empty">// no peer links</div>
+            ) : (
+              peerStats.map((s) => (
+                <div key={s.id} className="diag__row">
+                  <span className="diag__node">{peersRef.current.get(s.id)?.displayName ?? s.id.slice(0, 6)}</span>
+                  <span>RTT {s.rttMs == null ? '--' : `${s.rttMs}ms`}</span>
+                  <span>LOSS {s.lossPct}%</span>
+                  <span>JIT {s.jitterMs == null ? '--' : `${s.jitterMs}ms`}</span>
+                  <span>IN {s.bitrateInKbps}k</span>
+                  <span>OUT {s.bitrateOutKbps}k</span>
+                  <span>{s.codec ?? '--'}</span>
+                  <span className={`diag__relay diag__relay--${s.relay}`}>{s.relay}</span>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      )}
 
       {toast && (
         <div className="toast" role="status" aria-live="polite" key={toast.id}>

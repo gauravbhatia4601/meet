@@ -1,6 +1,15 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { PeerConnectionManager } from './PeerConnectionManager';
 
+/** Minimal fake RTCDataChannel for the chat-channel tests. */
+class FakeDataChannel {
+  readyState = 'open';
+  onmessage: ((ev: { data: string }) => void) | null = null;
+  onclose: (() => void) | null = null;
+  send = vi.fn();
+  close = vi.fn();
+}
+
 /**
  * Minimal fake RTCPeerConnection so the PeerConnectionManager can be tested
  * in Node. The manager only constructs RTCPeerConnection inside its methods,
@@ -12,6 +21,7 @@ class FakePeerConnection {
   localDescription: { type: string; sdp: string } | null = null;
   onicecandidate: ((ev: { candidate: unknown }) => void) | null = null;
   ontrack: ((ev: { streams: MediaStream[] }) => void) | null = null;
+  ondatachannel: ((ev: { channel: FakeDataChannel }) => void) | null = null;
   senders: { kind: string; track: { kind: string } | null; replaceTrack: ReturnType<typeof vi.fn> }[] = [];
 
   constructor() {
@@ -25,6 +35,9 @@ class FakePeerConnection {
   }
   getSenders() {
     return this.senders;
+  }
+  createDataChannel() {
+    return new FakeDataChannel();
   }
   createOffer() {
     return Promise.resolve({ type: 'offer', sdp: 'offer-sdp' });
@@ -56,10 +69,14 @@ function makeStream(): MediaStream {
   } as unknown as MediaStream;
 }
 
+function makeCallbacks() {
+  return { onStream: vi.fn(), onRemoteMediaState: vi.fn(), onChat: vi.fn() };
+}
+
 function makeManager(socket = makeSocket()) {
   return new PeerConnectionManager(
     socket,
-    { onStream: vi.fn(), onRemoteMediaState: vi.fn() },
+    makeCallbacks(),
     makeStream(),
     { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] },
   );
@@ -148,7 +165,7 @@ describe('PeerConnectionManager', () => {
     const socket = makeSocket();
     const manager = new PeerConnectionManager(
       socket,
-      { onStream: vi.fn(), onRemoteMediaState: vi.fn() },
+      makeCallbacks(),
       stream,
       { iceServers: [] },
     );
@@ -173,7 +190,7 @@ describe('PeerConnectionManager', () => {
     const socket = makeSocket();
     const manager = new PeerConnectionManager(
       socket,
-      { onStream: vi.fn(), onRemoteMediaState: vi.fn() },
+      makeCallbacks(),
       stream,
       { iceServers: [] },
     );
@@ -223,7 +240,7 @@ describe('PeerConnectionManager', () => {
     } as unknown as MediaStream;
     const manager = new PeerConnectionManager(
       socket,
-      { onStream: vi.fn(), onRemoteMediaState: vi.fn() },
+      makeCallbacks(),
       stream,
       { iceServers: [] },
     );
@@ -236,5 +253,29 @@ describe('PeerConnectionManager', () => {
     // Only the live track should be added.
     expect(addTrackSpy).toHaveBeenCalledTimes(1);
     expect(addTrackSpy).toHaveBeenCalledWith(liveTrack, stream);
+  });
+
+  it('sends chat over the datachannel and reports it delivered', () => {
+    const manager = makeManager();
+    manager.handleNewPeer('peer-1');
+    // handleNewPeer creates a datachannel; sendChat should use it.
+    expect(manager.sendChat('hello')).toBe(true);
+  });
+
+  it('falls back to false (no open channel) before any peer connects', () => {
+    const manager = makeManager();
+    expect(manager.sendChat('hello')).toBe(false);
+  });
+
+  it('delivers an incoming datachannel message to onChat', () => {
+    const cb = makeCallbacks();
+    const manager = new PeerConnectionManager(makeSocket(), cb, makeStream(), { iceServers: [] });
+    manager.handleNewPeer('peer-1');
+    // Simulate the answerer receiving the offerer's datachannel.
+    const pc = FakePeerConnection.instances[0];
+    const dc = new FakeDataChannel();
+    pc.ondatachannel?.({ channel: dc });
+    dc.onmessage?.({ data: JSON.stringify({ text: 'hi', ts: 123 }) });
+    expect(cb.onChat).toHaveBeenCalledWith('peer-1', 'hi', 123);
   });
 });
