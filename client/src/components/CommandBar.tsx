@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { suggestCommands } from '../lib/commands';
 
 interface Suggestion {
@@ -18,15 +18,17 @@ interface CommandBarProps {
  * Terminal-style control bar. There are no media toggle buttons — the user
  * drives the call by typing slash commands. Typing "/" lists every available
  * command (built-ins + aliases); typing more filters. The list is
- * keyboard-navigable (Up/Down, Enter, Esc). When not browsing suggestions,
- * Up/Down recall command history (shell-style).
+ * keyboard-navigable (Up/Down, Enter, Esc) and scrolls to follow the
+ * highlighted item. When not browsing suggestions, Up/Down recall command
+ * history (shell-style).
  */
 export default function CommandBar({ onCommand, aliases = [], inputRef }: CommandBarProps) {
   const [value, setValue] = useState('');
   const [highlight, setHighlight] = useState(-1);
-  const [history, setHistory] = useState<string[]>([]);
   const [, setHistIndex] = useState(-1);
+  const [history, setHistory] = useState<string[]>([]);
   const internalRef = useRef<HTMLInputElement>(null);
+  const listRef = useRef<HTMLUListElement>(null);
   const ref = inputRef ?? internalRef;
 
   const trimmed = value.trim();
@@ -38,6 +40,16 @@ export default function CommandBar({ onCommand, aliases = [], inputRef }: Comman
         ...aliases.filter((a) => a.label.slice(1).toLowerCase().startsWith(query)),
       ]
     : [];
+
+  // Keep the highlighted row in view when navigating with the keyboard (the
+  // browser only does this automatically for mouse hover).
+  useEffect(() => {
+    if (highlight < 0) return;
+    const list = listRef.current;
+    if (!list) return;
+    const item = list.children[highlight] as HTMLElement | undefined;
+    item?.scrollIntoView({ block: 'nearest' });
+  }, [highlight]);
 
   function run(raw: string) {
     const cmd = raw.trim();
@@ -131,36 +143,27 @@ export default function CommandBar({ onCommand, aliases = [], inputRef }: Comman
           aria-autocomplete="list"
         />
         {suggestions.length > 0 && (
-          <ul className="cmdbar__suggest" role="listbox" aria-label="Available commands">
-            {suggestions.map((c) => {
-              const i = suggestions.indexOf(c);
-              return (
-                <li key={c.label} role="option" aria-selected={i === highlight}>
-                  <button
-                    type="button"
-                    className={`cmdbar__suggest-item${i === highlight ? ' cmdbar__suggest-item--active' : ''}`}
-                    onClick={() => pick(c)}
-                    onMouseEnter={() => setHighlight(i)}
-                  >
-                    <span className="cmdbar__suggest-cmd">{c.label}</span>
-                    <span className="cmdbar__suggest-desc">{c.description}</span>
-                  </button>
-                </li>
-              );
-            })}
+          <ul className="cmdbar__suggest" role="listbox" aria-label="Available commands" ref={listRef}>
+            {suggestions.map((c, i) => (
+              <li key={c.label} role="option" aria-selected={i === highlight}>
+                <button
+                  type="button"
+                  className={`cmdbar__suggest-item${i === highlight ? ' cmdbar__suggest-item--active' : ''}`}
+                  onClick={() => pick(c)}
+                  onMouseEnter={() => setHighlight(i)}
+                >
+                  <span className="cmdbar__suggest-cmd">{c.label}</span>
+                  <span className="cmdbar__suggest-desc">{c.description}</span>
+                </button>
+              </li>
+            ))}
           </ul>
         )}
       </div>
       <div className="cmdbar__btns">
-        <button type="button" className="cmdbar__btn" onClick={() => run('/mute')}>
-          /mute
-        </button>
-        <button type="button" className="cmdbar__btn" onClick={() => run('/cam')}>
-          /cam
-        </button>
-        <button type="button" className="cmdbar__btn cmdbar__btn--danger" onClick={() => run('/exit')}>
-          /exit
-        </button>
+        <button type="button" className="cmdbar__btn" onClick={() => run('/mute')}>/mute</button>
+        <button type="button" className="cmdbar__btn" onClick={() => run('/cam')}>/cam</button>
+        <button type="button" className="cmdbar__btn cmdbar__btn--danger" onClick={() => run('/exit')}>/exit</button>
       </div>
     </form>
   );
