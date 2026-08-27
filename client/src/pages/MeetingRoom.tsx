@@ -92,6 +92,11 @@ export default function MeetingRoom() {
   const [latency, setLatency] = useState<number | null>(null);
   const [peerStats, setPeerStats] = useState<PeerStat[]>([]);
   const [diagOpen, setDiagOpen] = useState(false);
+  const [deviceOpen, setDeviceOpen] = useState(false);
+  const [videoDevices, setVideoDevices] = useState<MediaDeviceInfo[]>([]);
+  const [audioDevices, setAudioDevices] = useState<MediaDeviceInfo[]>([]);
+  const [selectedVideoId, setSelectedVideoId] = useState<string | null>(null);
+  const [selectedAudioId, setSelectedAudioId] = useState<string | null>(null);
   const [aliases, setAliases] = useState<Alias[]>(loadAliases);
   const [unread, setUnread] = useState(0);
   const [chimesOn, setChimesOn] = useState(() => localStorage.getItem(CHIMES_KEY) !== 'off');
@@ -244,8 +249,13 @@ export default function MeetingRoom() {
       cameraOnRef.current = false;
       return;
     }
+    const storedVideoId = localStorage.getItem("uplink_video_device");
+    const storedAudioId = localStorage.getItem("uplink_audio_device");
     navigator.mediaDevices
-      .getUserMedia({ video: true, audio: true })
+      .getUserMedia({
+        video: storedVideoId ? { deviceId: { exact: storedVideoId } } : true,
+        audio: storedAudioId ? { deviceId: { exact: storedAudioId } } : true,
+      })
       .then((stream) => {
         if (cancelled) {
           stream.getTracks().forEach((t) => t.stop());
@@ -257,6 +267,15 @@ export default function MeetingRoom() {
         setCameraOn(true);
         micOnRef.current = true;
         cameraOnRef.current = true;
+        navigator.mediaDevices.enumerateDevices().then((devices) => {
+          if (cancelled) return;
+          setVideoDevices(devices.filter((d) => d.kind === "videoinput"));
+          setAudioDevices(devices.filter((d) => d.kind === "audioinput"));
+          const videoTrack = stream.getVideoTracks()[0];
+          const audioTrack = stream.getAudioTracks()[0];
+          setSelectedVideoId(storedVideoId || videoTrack?.getSettings().deviceId || "");
+          setSelectedAudioId(storedAudioId || audioTrack?.getSettings().deviceId || "");
+        });
       })
       .catch((err) => {
         if (cancelled) return;
@@ -628,6 +647,40 @@ export default function MeetingRoom() {
     updateLocalMediaState({ cameraOn: true });
   }
 
+  async function switchVideoDevice(deviceId: string) {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { deviceId: { exact: deviceId } },
+      audio: false,
+    });
+    const newTrack = stream.getVideoTracks()[0];
+    const oldTrack = localStreamRef.current?.getVideoTracks()[0];
+    if (oldTrack) oldTrack.stop();
+    if (localStreamRef.current) {
+      localStreamRef.current.removeTrack(oldTrack!);
+      localStreamRef.current.addTrack(newTrack);
+    }
+    rtcRef.current?.replaceLocalTrack("video", newTrack);
+    localStorage.setItem("uplink_video_device", deviceId);
+    setSelectedVideoId(deviceId);
+  }
+
+  async function switchAudioDevice(deviceId: string) {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: false,
+      audio: { deviceId: { exact: deviceId } },
+    });
+    const newTrack = stream.getAudioTracks()[0];
+    const oldTrack = localStreamRef.current?.getAudioTracks()[0];
+    if (oldTrack) oldTrack.stop();
+    if (localStreamRef.current) {
+      localStreamRef.current.removeTrack(oldTrack!);
+      localStreamRef.current.addTrack(newTrack);
+    }
+    rtcRef.current?.replaceLocalTrack("audio", newTrack);
+    localStorage.setItem("uplink_audio_device", deviceId);
+    setSelectedAudioId(deviceId);
+  }
+
   async function toggleScreenShare() {
     const stream = localStreamRef.current;
     if (!stream) return;
@@ -800,6 +853,11 @@ export default function MeetingRoom() {
         pushLog('> /DIAG :: net_console', 'ok');
         showToast(diagOpen ? 'Diagnostics closed' : 'Diagnostics open');
         break;
+      case 'device':
+        setDeviceOpen((v) => !v);
+        pushLog('> /DEVICE :: device_picker', 'ok');
+        showToast(deviceOpen ? 'Device picker closed' : 'Device picker open');
+        break;
       case 'chimes':
         setChimesOn((v) => !v);
         pushLog('> /CHIMES :: toggle', 'ok');
@@ -934,6 +992,23 @@ export default function MeetingRoom() {
               {cameraOn ? 'CAM ON' : 'CAM OFF'}
             </button>
           </div>
+
+          {videoDevices.length > 1 && (
+            <div className="gate__device">
+              <label className="field-label">Camera</label>
+              <select className="text-input gate__select" value={selectedVideoId ?? ''} onChange={(e) => void switchVideoDevice(e.target.value)}>
+                {videoDevices.map((d) => (<option key={d.deviceId} value={d.deviceId}>{d.label || `Camera ${d.deviceId.slice(0, 6)}`}</option>))}
+              </select>
+            </div>
+          )}
+          {audioDevices.length > 1 && (
+            <div className="gate__device">
+              <label className="field-label">Microphone</label>
+              <select className="text-input gate__select" value={selectedAudioId ?? ''} onChange={(e) => void switchAudioDevice(e.target.value)}>
+                {audioDevices.map((d) => (<option key={d.deviceId} value={d.deviceId}>{d.label || `Mic ${d.deviceId.slice(0, 6)}`}</option>))}
+              </select>
+            </div>
+          )}
 
           {mediaError && <p className="form-error" role="alert">{mediaError}</p>}
 
@@ -1151,6 +1226,31 @@ export default function MeetingRoom() {
                   <span className={`diag__relay diag__relay--${s.relay}`}>{s.relay}</span>
                 </div>
               ))
+            )}
+          </div>
+        </div>
+      )}
+
+      {deviceOpen && (
+        <div className="device-panel terminal-border" role="dialog" aria-label="Device settings">
+          <div className="device-panel__header">
+            <span>DEVICE_SETTINGS</span>
+            <button type="button" className="diag__close" onClick={() => setDeviceOpen(false)} aria-label="Close device settings">✕</button>
+          </div>
+          <div className="device-panel__body">
+            {videoDevices.length > 1 && (
+              <label className="field-label">Camera
+                <select className="text-input" value={selectedVideoId ?? ''} onChange={(e) => void switchVideoDevice(e.target.value)}>
+                  {videoDevices.map((d) => (<option key={d.deviceId} value={d.deviceId}>{d.label || `Camera ${d.deviceId.slice(0, 6)}`}</option>))}
+                </select>
+              </label>
+            )}
+            {audioDevices.length > 1 && (
+              <label className="field-label">Microphone
+                <select className="text-input" value={selectedAudioId ?? ''} onChange={(e) => void switchAudioDevice(e.target.value)}>
+                  {audioDevices.map((d) => (<option key={d.deviceId} value={d.deviceId}>{d.label || `Mic ${d.deviceId.slice(0, 6)}`}</option>))}
+                </select>
+              </label>
             )}
           </div>
         </div>

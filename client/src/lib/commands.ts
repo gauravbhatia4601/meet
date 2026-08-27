@@ -14,6 +14,7 @@ export const COMMANDS: CommandDef[] = [
   { name: 'chat', aliases: ['comms'], label: '/chat', description: 'Toggle chat (mobile)' },
   { name: 'copy', aliases: ['invite', 'link'], label: '/copy', description: 'Copy invite link' },
   { name: 'diag', aliases: ['net'], label: '/diag', description: 'Toggle network diagnostics' },
+  { name: 'device', label: '/device', description: 'Switch camera/mic' },
   { name: 'alias', label: '/alias', description: 'Define a command macro' },
   { name: 'chimes', label: '/chimes', description: 'Toggle join/leave chimes' },
   { name: 'exit', aliases: ['leave', 'quit'], label: '/exit', description: 'Leave the session' },
