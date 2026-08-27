@@ -18,9 +18,9 @@ interface CommandBarProps {
  * Terminal-style control bar. There are no media toggle buttons — the user
  * drives the call by typing slash commands. Typing "/" lists every available
  * command (built-ins + aliases); typing more filters. The list is
- * keyboard-navigable (Up/Down, Enter, Esc) and scrolls to follow the
- * highlighted item. When not browsing suggestions, Up/Down recall command
- * history (shell-style).
+ * keyboard-navigable (Up/Down, Enter, Esc). Only keyboard navigation scrolls
+ * the list (hover does not). When not browsing suggestions, Up/Down recall
+ * command history (shell-style). Clicking outside closes the list.
  */
 export default function CommandBar({ onCommand, aliases = [], inputRef }: CommandBarProps) {
   const [value, setValue] = useState('');
@@ -29,6 +29,9 @@ export default function CommandBar({ onCommand, aliases = [], inputRef }: Comman
   const [history, setHistory] = useState<string[]>([]);
   const internalRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLUListElement>(null);
+  const formRef = useRef<HTMLFormElement>(null);
+  const keyboardNavRef = useRef(true);
+  const suppressHoverRef = useRef(false);
   const ref = inputRef ?? internalRef;
 
   const trimmed = value.trim();
@@ -41,15 +44,32 @@ export default function CommandBar({ onCommand, aliases = [], inputRef }: Comman
       ]
     : [];
 
-  // Keep the highlighted row in view when navigating with the keyboard (the
-  // browser only does this automatically for mouse hover).
+  // Scroll the highlighted item into view ONLY on keyboard navigation (not
+  // hover). Suppress the spurious mouseenter the browser fires when an item
+  // scrolls under a stationary cursor, so the highlight doesn't jump.
   useEffect(() => {
-    if (highlight < 0) return;
+    if (highlight < 0 || !keyboardNavRef.current) return;
     const list = listRef.current;
     if (!list) return;
+    suppressHoverRef.current = true;
     const item = list.children[highlight] as HTMLElement | undefined;
     item?.scrollIntoView({ block: 'nearest' });
+    requestAnimationFrame(() => {
+      suppressHoverRef.current = false;
+    });
   }, [highlight]);
+
+  // Click outside the command bar closes the list.
+  useEffect(() => {
+    function onDown(e: MouseEvent) {
+      if (formRef.current && !formRef.current.contains(e.target as Node)) {
+        setValue('');
+        setHighlight(-1);
+      }
+    }
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, []);
 
   function run(raw: string) {
     const cmd = raw.trim();
@@ -70,6 +90,7 @@ export default function CommandBar({ onCommand, aliases = [], inputRef }: Comman
   }
 
   function onKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    keyboardNavRef.current = true;
     if (e.key === 'Escape') {
       setValue('');
       setHighlight(-1);
@@ -112,6 +133,7 @@ export default function CommandBar({ onCommand, aliases = [], inputRef }: Comman
   }
 
   function onChange(e: React.ChangeEvent<HTMLInputElement>) {
+    keyboardNavRef.current = true;
     const v = e.target.value;
     setValue(v);
     setHighlight(v.trim().startsWith('/') ? 0 : -1);
@@ -123,7 +145,7 @@ export default function CommandBar({ onCommand, aliases = [], inputRef }: Comman
   }
 
   return (
-    <form className="cmdbar terminal-border" onSubmit={submit} role="search" aria-label="Call command bar">
+    <form ref={formRef} className="cmdbar terminal-border" onSubmit={submit} role="search" aria-label="Call command bar">
       <span className="cmdbar__prompt" aria-hidden="true">&gt;</span>
       <div className="cmdbar__field">
         <input
@@ -143,14 +165,18 @@ export default function CommandBar({ onCommand, aliases = [], inputRef }: Comman
           aria-autocomplete="list"
         />
         {suggestions.length > 0 && (
-          <ul className="cmdbar__suggest" role="listbox" aria-label="Available commands" ref={listRef} onMouseLeave={() => setHighlight(-1)}>
+          <ul className="cmdbar__suggest" role="listbox" aria-label="Available commands" ref={listRef}>
             {suggestions.map((c, i) => (
               <li key={c.label} role="option" aria-selected={i === highlight}>
                 <button
                   type="button"
                   className={`cmdbar__suggest-item${i === highlight ? ' cmdbar__suggest-item--active' : ''}`}
                   onClick={() => pick(c)}
-                  onMouseEnter={() => setHighlight(i)}
+                  onMouseEnter={() => {
+                    if (suppressHoverRef.current) return;
+                    keyboardNavRef.current = false;
+                    setHighlight(i);
+                  }}
                 >
                   <span className="cmdbar__suggest-cmd">{c.label}</span>
                   <span className="cmdbar__suggest-desc">{c.description}</span>
