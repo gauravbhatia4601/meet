@@ -65,7 +65,7 @@ function useIsDesktop() {
 
 export default function MeetingRoom() {
   const rawRoomId = useParams().roomId ?? '';
-  const roomId = normalizeRoomId(rawRoomId);
+  const [roomId, setRoomId] = useState(() => (rawRoomId === 'new' ? '' : normalizeRoomId(rawRoomId)));
   const socket = useSocket();
   const navigate = useNavigate();
   const isDesktop = useIsDesktop();
@@ -351,6 +351,23 @@ export default function MeetingRoom() {
     let cancelled = false;
 
     async function init() {
+      let rid = roomId;
+      if (!rid) {
+        // New meeting: create the room now that the name is set, so a
+        // nameless user can never create a room.
+        rid = await new Promise<string>((resolve) =>
+          socket.emit('create-room', (res) => resolve(res.ok && res.roomId ? res.roomId : '')),
+        );
+        if (cancelled) return;
+        if (!rid) {
+          setError('Could not create meeting. Please try again.');
+          return;
+        }
+        setRoomId(rid);
+        navigate(`/room/${rid}`, { replace: true });
+        return; // the roomId change re-runs init, which then joins
+      }
+
       const stream = localStreamRef.current ?? new MediaStream();
       if (cancelled) return;
       localStreamRef.current = stream;
@@ -372,7 +389,7 @@ export default function MeetingRoom() {
         console.warn('[rtc] could not fetch rtc-config, using empty ICE servers', err);
       }
 
-      socket.emit('join-room', { roomId, displayName: name }, (res) => {
+      socket.emit('join-room', { roomId: rid, displayName: name }, (res) => {
         if (cancelled) return;
         if (!res.ok) {
           setError(res.error ?? 'This meeting no longer exists.');

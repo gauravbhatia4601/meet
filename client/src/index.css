@@ -1622,3 +1622,16 @@ a {
 .diag__relay--relay { color: var(--warning); }
 .diag__relay--host { color: var(--primary); }
 .diag__relay--srflx { color: var(--secondary); }
+
+/* Big initial "card" when there's no camera/stream (fills the whole tile). */
+.tile, .call__self { container-type: inline-size; }
+.tile__avatar {
+  position: absolute;
+  inset: 0;
+  border: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 30cqw;
+  color: #fff;
+}
