@@ -20,6 +20,8 @@ export interface PeerStat {
   codec: string | null;
   /** ICE path: host | srflx | prflx | relay | unknown (relay = TURN in use). */
   relay: string;
+  /** Received audio level (0..1) for active-speaker detection. */
+  audioLevel: number;
 }
 
 const CHAT_LABEL = 'uplink-chat';
@@ -186,6 +188,7 @@ export class PeerConnectionManager {
         let bytesIn = 0;
         let bytesOut = 0;
         let codec: string | null = null;
+        let audioLevel = 0;
 
         // Selected candidate pair → RTT + local candidate type (ICE path).
         let selected: any = null;
@@ -213,11 +216,16 @@ export class PeerConnectionManager {
               jitter?: number;
               bytesReceived?: number;
               codecId?: string;
+              kind?: string;
+              audioLevel?: number;
             };
             packetsReceived += ir.packetsReceived ?? 0;
             packetsLost += ir.packetsLost ?? 0;
             if (typeof ir.jitter === 'number') jitter = ir.jitter * 1000;
             bytesIn += ir.bytesReceived ?? 0;
+            if (ir.kind === "audio" && typeof ir.audioLevel === "number") {
+              audioLevel = Math.max(audioLevel, ir.audioLevel);
+            }
             if (!codec && ir.codecId) {
               const c = stats.get(ir.codecId) as (RTCStats & { mimeType?: string }) | undefined;
               if (c?.mimeType) codec = c.mimeType.split('/')[1] ?? null;
@@ -251,6 +259,7 @@ export class PeerConnectionManager {
           bitrateOutKbps: Math.round(bitrateOut),
           codec,
           relay,
+          audioLevel,
         });
       } catch {
         // skip a failing peer connection

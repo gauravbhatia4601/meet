@@ -1635,3 +1635,59 @@ a {
   font-size: 30cqw;
   color: #fff;
 }
+
+/* --- Active speaker --- */
+.tile--active {
+  border-color: var(--primary);
+  animation: tile-active 1.4s ease-in-out infinite;
+}
+@keyframes tile-active {
+  0%, 100% { box-shadow: 0 0 12px rgba(0, 255, 65, 0.45), inset 0 0 12px rgba(0, 255, 65, 0.12); }
+  50% { box-shadow: 0 0 22px rgba(0, 255, 65, 0.7), inset 0 0 18px rgba(0, 255, 65, 0.18); }
+}
+
+/* --- Mobile control strip (replaces the command bar on small screens) --- */
+.mobile-controls { display: none; }
+.mc-btn {
+  flex: 1;
+  padding: 12px 8px;
+  border: 1px solid var(--border-strong);
+  color: var(--text-muted);
+  background: transparent;
+  font-family: inherit;
+  font-size: 12px;
+  letter-spacing: 0.05em;
+}
+.mc-btn--on { border-color: var(--primary); color: var(--primary); }
+.mc-btn:hover { background: var(--primary-soft); }
+.mc-btn:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.mc-btn--danger { border-color: var(--danger); color: var(--danger); }
+.mc-badge {
+  color: #000;
+  background: var(--primary);
+  font-size: 9px;
+  padding: 0 4px;
+  margin-left: 2px;
+}
+
+/* --- Chat unread badge --- */
+.call__chat-toggle { position: relative; }
+.call__chat-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  background: var(--danger);
+  color: #000;
+  font-size: 9px;
+  min-width: 14px;
+  height: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 3px;
+}
+
+@media (max-width: 767px) {
+  .mobile-controls { display: flex; gap: 8px; }
+  .cmdbar { display: none; }
+}

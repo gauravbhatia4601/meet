@@ -32,6 +32,7 @@ interface Alias {
 
 const NAME_KEY = 'meet_name';
 const ALIAS_KEY = 'uplink_aliases';
+const CHIMES_KEY = 'uplink_chimes';
 
 function getDisplayName(): string {
   return localStorage.getItem(NAME_KEY) ?? 'Guest';
@@ -92,6 +93,8 @@ export default function MeetingRoom() {
   const [peerStats, setPeerStats] = useState<PeerStat[]>([]);
   const [diagOpen, setDiagOpen] = useState(false);
   const [aliases, setAliases] = useState<Alias[]>(loadAliases);
+  const [unread, setUnread] = useState(0);
+  const [chimesOn, setChimesOn] = useState(() => localStorage.getItem(CHIMES_KEY) !== 'off');
   const [mediaError, setMediaError] = useState('');
   const [micLevel, setMicLevel] = useState(0);
   const [toast, setToast] = useState<{ id: number; text: string } | null>(null);
@@ -122,6 +125,11 @@ export default function MeetingRoom() {
   const audioCtxRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const rafRef = useRef<number | null>(null);
+  const chatVisibleRef = useRef(true);
+  const chimesOnRef = useRef(chimesOn);
+  const chimeCtxRef = useRef<AudioContext | null>(null);
+  chatVisibleRef.current = isDesktop || chatOpen;
+  chimesOnRef.current = chimesOn;
 
   const pushLog = useCallback((text: string, level?: LogLevel) => {
     setLogs((prev) => [...prev, { id: logIdRef.current++, text, level }].slice(-80));
@@ -175,6 +183,29 @@ export default function MeetingRoom() {
     }
   }, [stopMicMeter]);
 
+  // Subtle terminal beep when peers join/leave (toggle with /chimes).
+  const playChime = useCallback((kind: 'join' | 'leave') => {
+    if (!chimesOnRef.current) return;
+    try {
+      const ctx = chimeCtxRef.current ?? (chimeCtxRef.current = new AudioContext());
+      if (ctx.state === 'suspended') void ctx.resume();
+      const o = ctx.createOscillator();
+      const g = ctx.createGain();
+      o.connect(g);
+      g.connect(ctx.destination);
+      o.type = 'square';
+      o.frequency.value = kind === 'join' ? 880 : 440;
+      const t = ctx.currentTime;
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(0.04, t + 0.01);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.15);
+      o.start(t);
+      o.stop(t + 0.16);
+    } catch {
+      // AudioContext unavailable
+    }
+  }, []);
+
   useEffect(() => {
     sysLogsRef.current?.scrollTo({ top: sysLogsRef.current.scrollHeight });
   }, [logs]);
@@ -183,7 +214,6 @@ export default function MeetingRoom() {
     peersRef.current = peers;
   }, [peers]);
 
-  // Persist command aliases across sessions.
   useEffect(() => {
     try {
       localStorage.setItem(ALIAS_KEY, JSON.stringify(aliases));
@@ -191,6 +221,15 @@ export default function MeetingRoom() {
       // ignore quota / privacy-mode errors
     }
   }, [aliases]);
+
+  useEffect(() => {
+    localStorage.setItem(CHIMES_KEY, chimesOn ? 'on' : 'off');
+  }, [chimesOn]);
+
+  // Clear the chat unread badge whenever chat is visible.
+  useEffect(() => {
+    if (isDesktop || chatOpen) setUnread(0);
+  }, [isDesktop, chatOpen]);
 
   // Acquire camera + mic once, on mount, so the pre-join lobby can preview them
   // and the user can enable/disable each before connecting. The same stream is
@@ -311,8 +350,9 @@ export default function MeetingRoom() {
     if (gateError) gateErrorRef.current?.focus();
   }, [gateError]);
 
-  // Live per-peer network diagnostics (RTT/loss/jitter/bitrate/codec/relay)
-  // for the NET_CONSOLE, and the worst-case RTT for the HUD footer.
+  // Live per-peer network diagnostics (RTT/loss/jitter/bitrate/codec/relay) for
+  // the NET_CONSOLE, plus received audio levels for active-speaker detection,
+  // and the worst-case RTT for the HUD footer.
   useEffect(() => {
     if (!joined) return;
     let active = true;
@@ -324,7 +364,7 @@ export default function MeetingRoom() {
       setLatency(stats.some((s) => s.rttMs != null) ? maxRtt : null);
     };
     void measure();
-    const id = window.setInterval(measure, 2000);
+    const id = window.setInterval(measure, 1000);
     return () => {
       active = false;
       window.clearInterval(id);
@@ -344,8 +384,9 @@ export default function MeetingRoom() {
     }
   }, []);
 
-  // Setup: join the room. Local media was acquired on mount for the pre-join
-  // lobby, so we reuse it (with whatever mic/camera choices were made there).
+  // Setup: join the room. For a brand-new meeting, create it now (after the
+  // name is set). Local media was acquired on mount for the pre-join lobby and
+  // is reused, so the mic/camera choices carry into the call.
   useEffect(() => {
     if (!nameReady) return;
     let cancelled = false;
@@ -414,6 +455,7 @@ export default function MeetingRoom() {
           },
           onChat: (id, text, ts) => {
             // E2E message received over a datachannel; attribute by sender id.
+            if (!chatVisibleRef.current) setUnread((u) => u + 1);
             setMessages((prev) => [
               ...prev,
               { from: id, senderName: peersRef.current.get(id)?.displayName ?? '…', text, timestamp: ts },
@@ -440,6 +482,7 @@ export default function MeetingRoom() {
       socket.on('new-peer', ({ peerSocketId }) => {
         rtcRef.current?.handleNewPeer(peerSocketId);
         pushLog('> NEW_NODE uplink');
+        playChime('join');
       });
 
       socket.on('offer', ({ from, offer }) => {
@@ -462,11 +505,13 @@ export default function MeetingRoom() {
           return next;
         });
         pushLog('> NODE dropped');
+        playChime('leave');
       });
 
       // Fallback chat path: only used before datachannels are open (no peers
       // connected yet). Once peers connect, chat goes E2E over datachannels.
       socket.on('chat-message', (msg) => {
+        if (!chatVisibleRef.current) setUnread((u) => u + 1);
         setMessages((prev) => [...prev, msg]);
       });
 
@@ -556,7 +601,7 @@ export default function MeetingRoom() {
     rtcRef.current?.replaceLocalTrack('audio', audioTrack);
     micOnRef.current = true;
     setMicOn(true);
-    updateLocalMediaState({ micOn: true });
+      updateLocalMediaState({ micOn: true });
   }
 
   async function toggleCamera() {
@@ -755,6 +800,11 @@ export default function MeetingRoom() {
         pushLog('> /DIAG :: net_console', 'ok');
         showToast(diagOpen ? 'Diagnostics closed' : 'Diagnostics open');
         break;
+      case 'chimes':
+        setChimesOn((v) => !v);
+        pushLog('> /CHIMES :: toggle', 'ok');
+        showToast(chimesOn ? 'Chimes off' : 'Chimes on');
+        break;
       case 'exit':
       case 'leave':
       case 'quit':
@@ -764,7 +814,7 @@ export default function MeetingRoom() {
       case 'help':
       case '?':
       case 'commands':
-        pushLog(`> commands: ${COMMANDS.map((c) => c.label).join(' ')} /diag /alias`, 'ok');
+        pushLog(`> commands: ${COMMANDS.map((c) => c.label).join(' ')}`, 'ok');
         showToast('Commands listed in SYS_LOGS');
         break;
       default:
@@ -815,6 +865,15 @@ export default function MeetingRoom() {
           ? 'DEGRADED'
           : 'NOMINAL';
   const aliasSuggestions = aliases.map((a) => ({ label: `/${a.name}`, description: `alias → /${a.command}` }));
+
+  // Active speaker = the peer with the strongest received audio (above noise).
+  const activeSpeakerId = (() => {
+    let best: { id: string; level: number } | null = null;
+    for (const s of peerStats) {
+      if (s.audioLevel > (best?.level ?? 0)) best = { id: s.id, level: s.audioLevel };
+    }
+    return best && best.level > 0.05 ? best.id : null;
+  })();
 
   const chatPanel = (
     <ChatPanel
@@ -928,11 +987,15 @@ export default function MeetingRoom() {
             <button
               type="button"
               className={`call__chat-toggle${chatOpen ? ' call__chat-toggle--active' : ''}`}
-              onClick={() => setChatOpen((v) => !v)}
+              onClick={() => {
+                setChatOpen((v) => !v);
+                setUnread(0);
+              }}
               aria-label="Toggle chat"
               aria-pressed={chatOpen}
             >
               <ChatIcon />
+              {unread > 0 && <span className="call__chat-badge">{unread}</span>}
             </button>
           )}
         </div>
@@ -971,6 +1034,7 @@ export default function MeetingRoom() {
                       screenShareOn={p.screenShareOn}
                       raisedHand={raisedHands.has(id)}
                       isHost={id === hostId}
+                      isActiveSpeaker={activeSpeakerId === id}
                     />
                   ))
                 )}
@@ -994,6 +1058,42 @@ export default function MeetingRoom() {
           </div>
 
           <CommandBar onCommand={runCommand} aliases={aliasSuggestions} inputRef={commandInputRef} />
+
+          <div className="mobile-controls" role="toolbar" aria-label="Call controls">
+            <button
+              type="button"
+              className={`mc-btn${micOn ? ' mc-btn--on' : ''}`}
+              onClick={() => void toggleMic()}
+              aria-pressed={micOn}
+              aria-label="Toggle microphone"
+            >MIC</button>
+            <button
+              type="button"
+              className={`mc-btn${cameraOn ? ' mc-btn--on' : ''}`}
+              onClick={() => void toggleCamera()}
+              aria-pressed={cameraOn}
+              aria-label="Toggle camera"
+            >CAM</button>
+            <button
+              type="button"
+              className={`mc-btn${chatOpen ? ' mc-btn--on' : ''}`}
+              onClick={() => {
+                setChatOpen((v) => !v);
+                setUnread(0);
+              }}
+              aria-pressed={chatOpen}
+              aria-label="Toggle chat"
+            >
+              CHAT
+              {unread > 0 && <sup className="mc-badge">{unread}</sup>}
+            </button>
+            <button
+              type="button"
+              className="mc-btn mc-btn--danger"
+              onClick={() => setConfirmLeave(true)}
+              aria-label="Leave call"
+            >EXIT</button>
+          </div>
 
           <footer className="call__foot">
             <span className="call__foot-room">ROOM: <strong translate="no">{roomId}</strong></span>

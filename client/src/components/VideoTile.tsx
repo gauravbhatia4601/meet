@@ -10,6 +10,7 @@ interface VideoTileProps {
   raisedHand?: boolean;
   isSelfView?: boolean;
   isHost?: boolean;
+  isActiveSpeaker?: boolean;
 }
 
 // Deterministic avatar background derived from the name, so each participant
@@ -37,6 +38,7 @@ export default function VideoTile({
   raisedHand = false,
   isSelfView = false,
   isHost = false,
+  isActiveSpeaker = false,
 }: VideoTileProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
 
@@ -55,7 +57,7 @@ export default function VideoTile({
   const hasVideo = cameraOn && !!stream;
 
   return (
-    <div className="tile">
+    <div className={`tile${isActiveSpeaker ? ' tile--active' : ''}`}>
       <video
         ref={videoRef}
         autoPlay
@@ -94,7 +96,13 @@ export default function VideoTile({
         </>
       ) : (
         <>
-          <span className={`tile__name${isHost ? ' tile__name--host' : ''}`}>{name}</span>
+          <span
+            className={`tile__name${isHost ? ' tile__name--host' : ''}${
+              isActiveSpeaker ? ' tile__name--speaking' : ''
+            }`}
+          >
+            {isActiveSpeaker ? `◉ ${name}` : name}
+          </span>
           {raisedHand && (
             <span className="tile__badge tile__badge--hand" aria-label="Hand raised">
               ✋
