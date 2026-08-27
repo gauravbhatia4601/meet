@@ -143,7 +143,7 @@ export default function CommandBar({ onCommand, aliases = [], inputRef }: Comman
           aria-autocomplete="list"
         />
         {suggestions.length > 0 && (
-          <ul className="cmdbar__suggest" role="listbox" aria-label="Available commands" ref={listRef}>
+          <ul className="cmdbar__suggest" role="listbox" aria-label="Available commands" ref={listRef} onMouseLeave={() => setHighlight(-1)}>
             {suggestions.map((c, i) => (
               <li key={c.label} role="option" aria-selected={i === highlight}>
                 <button

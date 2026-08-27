@@ -1430,7 +1430,7 @@ a {
   font-family: inherit;
   font-size: 13px;
 }
-.cmdbar__suggest-item:hover,
+
 .cmdbar__suggest-item:focus-visible {
   background: var(--primary-soft);
   outline: none;
