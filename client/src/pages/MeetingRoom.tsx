@@ -93,6 +93,7 @@ export default function MeetingRoom() {
   const [peerStats, setPeerStats] = useState<PeerStat[]>([]);
   const [diagOpen, setDiagOpen] = useState(false);
   const [deviceOpen, setDeviceOpen] = useState(false);
+  const [rosterOpen, setRosterOpen] = useState(false);
   const [videoDevices, setVideoDevices] = useState<MediaDeviceInfo[]>([]);
   const [audioDevices, setAudioDevices] = useState<MediaDeviceInfo[]>([]);
   const [selectedVideoId, setSelectedVideoId] = useState<string | null>(null);
@@ -893,6 +894,12 @@ export default function MeetingRoom() {
         pushLog('> /DEVICE :: device_picker', 'ok');
         showToast(deviceOpen ? 'Device picker closed' : 'Device picker open');
         break;
+      case 'who':
+      case 'people':
+        setRosterOpen((v) => !v);
+        pushLog('> /WHO :: people', 'ok');
+        showToast(rosterOpen ? 'Roster closed' : 'Roster open');
+        break;
       case 'chimes':
         setChimesOn((v) => !v);
         pushLog('> /CHIMES :: toggle', 'ok');
@@ -1287,6 +1294,29 @@ export default function MeetingRoom() {
                 </select>
               </label>
             )}
+          </div>
+        </div>
+      )}
+
+      {rosterOpen && (
+        <div className="roster-panel terminal-border" role="dialog" aria-label="Participants">
+          <div className="roster-panel__header">
+            <span>PEOPLE ({nodeCount})</span>
+            <button type="button" className="diag__close" onClick={() => setRosterOpen(false)} aria-label="Close roster">✕</button>
+          </div>
+          <div className="roster-panel__body">
+            <div className={`roster__row${activeSpeakerId === socket.id ? ' roster__row--speaking' : ''}`}>
+              <span className="roster__name">{displayName} (You)</span>
+              {socket.id === hostId && <span className="roster__badge roster__badge--host">HOST</span>}
+              <span className="roster__status">{micOn ? 'MIC:ON' : 'MIC:OFF'} {cameraOn ? 'CAM:ON' : 'CAM:OFF'}{screenSharing ? ' SHARE' : ''}{raisedHands.has(socket.id ?? '') ? ' ✋' : ''}</span>
+            </div>
+            {peerEntries.map(([id, p]) => (
+              <div key={id} className={`roster__row${activeSpeakerId === id ? ' roster__row--speaking' : ''}`}>
+                <span className="roster__name">{p.displayName}</span>
+                {id === hostId && <span className="roster__badge roster__badge--host">HOST</span>}
+                <span className="roster__status">{p.micOn ? 'MIC:ON' : 'MIC:OFF'} {p.cameraOn ? 'CAM:ON' : 'CAM:OFF'}{p.screenShareOn ? ' SHARE' : ''}{raisedHands.has(id) ? ' ✋' : ''}</span>
+              </div>
+            ))}
           </div>
         </div>
       )}
