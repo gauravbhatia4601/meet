@@ -1803,3 +1803,69 @@ select.text-input option { background: #000; color: var(--primary); }
 .rec-start:hover { background: var(--primary); color: #000; }
 .rec-start:focus-visible { outline: 2px solid var(--primary); outline-offset: 1px; }
 .rec-q:disabled { opacity: 0.4; cursor: default; }
+
+/* --- Presentation mode (screen share) --- */
+.call__body { transition: opacity 0.3s ease; }
+.call__side {
+  transition: opacity 0.3s ease, width 0.3s ease, min-width 0.3s ease, padding 0.3s ease;
+}
+.call__side--hidden {
+  opacity: 0;
+  width: 0 !important;
+  min-width: 0 !important;
+  padding: 0 !important;
+  overflow: hidden;
+  pointer-events: none;
+}
+.call__grid-wrap { transition: padding 0.3s ease; }
+
+/* Presentation: big screen + right filmstrip */
+.call__body--presenting .call__grid-wrap {
+  display: flex;
+  flex-direction: row;
+  gap: 0;
+}
+.call__presentation {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: fade-in 0.3s ease;
+}
+.call__presentation .tile {
+  width: 100%;
+  height: 100%;
+  aspect-ratio: auto;
+}
+.call__filmstrip {
+  width: 200px;
+  flex-shrink: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px;
+  border-left: 1px solid var(--outline);
+  animation: fade-in 0.3s ease;
+}
+.call__filmstrip .tile {
+  aspect-ratio: 16 / 9;
+  width: 100%;
+}
+.call__body--presenting .call__peers,
+.call__body--presenting .call__self {
+  display: none;
+}
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@media (max-width: 767px) {
+  .call__filmstrip { width: 120px; }
+}
+
+/* Smaller minimum tile size so more peers fit per row */
+.call__peers {
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 200px), 1fr));
+}

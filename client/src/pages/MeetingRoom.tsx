@@ -150,6 +150,7 @@ export default function MeetingRoom() {
   const recAudioCtxRef = useRef<AudioContext | null>(null);
   const recAudioDestRef = useRef<MediaStreamAudioDestinationNode | null>(null);
   const connectedAudioRef = useRef(new Set<MediaStreamTrack>());
+  const displayStreamRef = useRef<MediaStream | null>(null);
   chatVisibleRef.current = isDesktop || chatOpen;
   chimesOnRef.current = chimesOn;
 
@@ -771,6 +772,7 @@ export default function MeetingRoom() {
     try {
       if (!screenSharing) {
         const display = await navigator.mediaDevices.getDisplayMedia({ video: true });
+        displayStreamRef.current = display;
         const screenTrack = display.getVideoTracks()[0];
         setScreenSharing(true);
         updateLocalMediaState({ screenShareOn: true, cameraOn: false });
@@ -789,6 +791,7 @@ export default function MeetingRoom() {
   }
 
   const stopScreenShare = useCallback(() => {
+    displayStreamRef.current = null;
     const stream = localStreamRef.current;
     if (!stream) return;
     stream.getVideoTracks().forEach((t) => t.stop());
@@ -1255,6 +1258,13 @@ export default function MeetingRoom() {
     return best && best.level > 0.05 ? best.id : null;
   })();
 
+  // Screen-share presentation mode: when anyone is sharing, the shared screen
+  // fills the stage and other participants go to a right-side filmstrip.
+  const sharingPeerEntry = peerEntries.find(([, p]) => p.screenShareOn);
+  const anyoneSharing = screenSharing || !!sharingPeerEntry;
+  const presenterStream = screenSharing ? displayStreamRef.current : sharingPeerEntry?.[1]?.stream ?? null;
+  const presenterName = screenSharing ? `${displayName} (You)` : sharingPeerEntry?.[1]?.displayName ?? 'Presenter';
+
   const chatPanel = (
     <ChatPanel
       messages={messages}
@@ -1398,7 +1408,7 @@ export default function MeetingRoom() {
         </div>
       </header>
 
-      <div className="call__body">
+      <div className={`call__body${anyoneSharing ? ' call__body--presenting' : ''}`}>
         <div className="call__main">
           <div className="call__grid-wrap">
             {!joined && !error && !connError && (
@@ -1416,42 +1426,82 @@ export default function MeetingRoom() {
                 <Link to="/" className="btn btn-primary" onClick={cleanupMedia}>Go Home</Link>
               </div>
             )}
-            {joined && (
-              <div className={`call__peers${peerEntries.length === 0 ? ' call__peers--empty' : ''}`}>
-                {peerEntries.length === 0 ? (
-                  <span>// awaiting nodes…</span>
-                ) : (
-                  peerEntries.map(([id, p]) => (
+            {joined && anyoneSharing ? (
+              <>
+                <div className="call__presentation">
+                  <VideoTile
+                    stream={presenterStream}
+                    name={presenterName}
+                    micOn={screenSharing ? micOn : (sharingPeerEntry?.[1]?.micOn ?? true)}
+                    cameraOn
+                    screenShareOn
+                    isSelfView={screenSharing}
+                    isHost={screenSharing ? socket.id === hostId : sharingPeerEntry?.[0] === hostId}
+                    raisedHand={screenSharing ? raisedHands.has(socket.id ?? '') : (sharingPeerEntry ? raisedHands.has(sharingPeerEntry[0]) : false)}
+                    isActiveSpeaker={screenSharing ? activeSpeakerId === socket.id : (sharingPeerEntry ? activeSpeakerId === sharingPeerEntry[0] : false)}
+                  />
+                </div>
+                <div className="call__filmstrip">
+                  <VideoTile
+                    stream={selfTileStream}
+                    name={`${displayName} (You)`}
+                    isLocal
+                    micOn={micOn}
+                    cameraOn={cameraOn}
+                    isHost={socket.id === hostId}
+                    raisedHand={raisedHands.has(socket.id ?? '')}
+                    isActiveSpeaker={activeSpeakerId === socket.id}
+                  />
+                  {peerEntries.filter(([, p]) => !p.screenShareOn).map(([id, p]) => (
                     <VideoTile
                       key={id}
                       stream={p.stream}
                       name={p.displayName}
                       micOn={p.micOn}
                       cameraOn={p.cameraOn}
-                      screenShareOn={p.screenShareOn}
-                      raisedHand={raisedHands.has(id)}
                       isHost={id === hostId}
+                      raisedHand={raisedHands.has(id)}
                       isActiveSpeaker={activeSpeakerId === id}
                     />
-                  ))
-                )}
-              </div>
-            )}
-            {joined && (
-              <div className="call__self">
-                <VideoTile
-                  stream={selfTileStream}
-                  name={`${displayName} (You)`}
-                  isLocal
-                  micOn={micOn}
-                  cameraOn={cameraOn}
-                  screenShareOn={screenSharing}
-                  isSelfView
-                  isHost={socket.id === hostId}
-                  raisedHand={raisedHands.has(socket.id ?? '')}
-                />
-              </div>
-            )}
+                  ))}
+                </div>
+              </>
+            ) : joined ? (
+              <>
+                <div className={`call__peers${peerEntries.length === 0 ? ' call__peers--empty' : ''}`}>
+                  {peerEntries.length === 0 ? (
+                    <span>// awaiting nodes…</span>
+                  ) : (
+                    peerEntries.map(([id, p]) => (
+                      <VideoTile
+                        key={id}
+                        stream={p.stream}
+                        name={p.displayName}
+                        micOn={p.micOn}
+                        cameraOn={p.cameraOn}
+                        screenShareOn={p.screenShareOn}
+                        raisedHand={raisedHands.has(id)}
+                        isHost={id === hostId}
+                        isActiveSpeaker={activeSpeakerId === id}
+                      />
+                    ))
+                  )}
+                </div>
+                <div className="call__self">
+                  <VideoTile
+                    stream={selfTileStream}
+                    name={`${displayName} (You)`}
+                    isLocal
+                    micOn={micOn}
+                    cameraOn={cameraOn}
+                    screenShareOn={screenSharing}
+                    isSelfView
+                    isHost={socket.id === hostId}
+                    raisedHand={raisedHands.has(socket.id ?? '')}
+                  />
+                </div>
+              </>
+            ) : null}
           </div>
 
           <CommandBar onCommand={runCommand} aliases={aliasSuggestions} inputRef={commandInputRef} />
@@ -1514,7 +1564,7 @@ export default function MeetingRoom() {
         </div>
 
         {isDesktop && (
-          <aside className="call__side">
+          <aside className={`call__side${anyoneSharing ? ' call__side--hidden' : ''}`}>
             {chatPanel}
             <div className="syslogs terminal-border">
               <div className="syslogs__header">
