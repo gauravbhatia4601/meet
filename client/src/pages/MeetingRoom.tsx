@@ -145,6 +145,11 @@ export default function MeetingRoom() {
   const autoVideoOffRef = useRef(false);
   const poorCountRef = useRef(0);
   const goodCountRef = useRef(0);
+  const drawIntervalRef = useRef<number | null>(null);
+  const recVideoMapRef = useRef(new Map<MediaStream, HTMLVideoElement>());
+  const recAudioCtxRef = useRef<AudioContext | null>(null);
+  const recAudioDestRef = useRef<MediaStreamAudioDestinationNode | null>(null);
+  const connectedAudioRef = useRef(new Set<MediaStreamTrack>());
   chatVisibleRef.current = isDesktop || chatOpen;
   chimesOnRef.current = chimesOn;
 
@@ -883,24 +888,153 @@ export default function MeetingRoom() {
     socket.emit('raise-hand', { roomId });
   }
 
-  function startRecording(quality?: string) {
+  // Composite recording: captures ALL participants' video (via a hidden
+  // canvas compositor) and audio (via Web Audio mixing of local + remote tracks).
+  function startCompositeRecording(quality?: string) {
     const q = (quality ?? recQuality) as 'high' | 'standard' | 'low';
-    const stream = localStreamRef.current;
-    if (!stream || stream.getTracks().length === 0) {
-      showToast('No media to record');
-      return;
-    }
-    const bitrate = q === 'high' ? 5_000_000 : q === 'standard' ? 2_500_000 : 800_000;
+    const dims = q === 'high'
+      ? { w: 1280, h: 720, fps: 30, bitrate: 5_000_000 }
+      : q === 'standard'
+        ? { w: 960, h: 540, fps: 24, bitrate: 2_500_000 }
+        : { w: 640, h: 360, fps: 15, bitrate: 800_000 };
+
+    const canvas = document.createElement('canvas');
+    canvas.width = dims.w;
+    canvas.height = dims.h;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) { showToast('Recording not supported'); return; }
+
+    // Audio mixing: connect local + all remote audio tracks to one destination.
+    let audioTracks: MediaStreamTrack[] = [];
     try {
-      const recorder = new MediaRecorder(stream, {
+      const audioCtx = new AudioContext();
+      recAudioCtxRef.current = audioCtx;
+      const dest = audioCtx.createMediaStreamDestination();
+      recAudioDestRef.current = dest;
+      connectedAudioRef.current = new Set();
+      audioTracks = dest.stream.getAudioTracks();
+    } catch {
+      // Audio mixing unavailable; record video only.
+    }
+
+    function syncAudio() {
+      if (!recAudioCtxRef.current || !recAudioDestRef.current) return;
+      const allTracks: MediaStreamTrack[] = [];
+      if (localStreamRef.current) allTracks.push(...localStreamRef.current.getAudioTracks());
+      for (const [, p] of peersRef.current) {
+        if (p.stream) allTracks.push(...p.stream.getAudioTracks());
+      }
+      for (const track of allTracks) {
+        if (!connectedAudioRef.current.has(track)) {
+          try {
+            recAudioCtxRef.current.createMediaStreamSource(new MediaStream([track])).connect(recAudioDestRef.current);
+            connectedAudioRef.current.add(track);
+          } catch { /* track may have ended */ }
+        }
+      }
+    }
+
+    const colors = ['#1a73e8', '#188038', '#e37400', '#d93025', '#8430ce', '#00695c', '#c2185b', '#3f51b5'];
+
+    function draw() {
+      if (!ctx) return;
+      ctx.fillStyle = '#000';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      // Gather all current participants (self + remote peers).
+      const participants: { stream: MediaStream | null; name: string; hasVideo: boolean }[] = [];
+      if (localStreamRef.current) {
+        participants.push({ stream: localStreamRef.current, name: `${displayName} (You)`, hasVideo: cameraOnRef.current });
+      }
+      for (const [, p] of peersRef.current) {
+        participants.push({ stream: p.stream ?? null, name: p.displayName, hasVideo: p.cameraOn });
+      }
+
+      // Sync video elements (create for new streams, remove for gone streams).
+      const presentStreams = new Set(participants.filter((p) => p.stream).map((p) => p.stream!));
+      for (const [stream, v] of recVideoMapRef.current) {
+        if (!presentStreams.has(stream)) { v.srcObject = null; recVideoMapRef.current.delete(stream); }
+      }
+      for (const p of participants) {
+        if (p.stream && !recVideoMapRef.current.has(p.stream)) {
+          const v = document.createElement('video');
+          v.srcObject = p.stream;
+          v.muted = true;
+          v.playsInline = true;
+          void v.play();
+          recVideoMapRef.current.set(p.stream, v);
+        }
+      }
+
+      // Sync audio (connect new audio tracks).
+      syncAudio();
+
+      // Draw grid.
+      const n = participants.length;
+      if (n === 0) return;
+      const cols = n <= 1 ? 1 : n <= 4 ? 2 : n <= 9 ? 3 : 4;
+      const rows = Math.ceil(n / cols);
+      const cellW = canvas.width / cols;
+      const cellH = canvas.height / rows;
+
+      participants.forEach((p, i) => {
+        const col = i % cols;
+        const row = Math.floor(i / cols);
+        const x = col * cellW;
+        const y = row * cellH;
+        const v = p.stream ? recVideoMapRef.current.get(p.stream) : null;
+
+        if (p.hasVideo && v && v.videoWidth > 0) {
+          const vA = v.videoWidth / v.videoHeight;
+          const cA = cellW / cellH;
+          let dw, dh, dx, dy;
+          if (vA > cA) { dh = cellH; dw = dh * vA; dx = x + (cellW - dw) / 2; dy = y; }
+          else { dw = cellW; dh = dw / vA; dx = x; dy = y + (cellH - dh) / 2; }
+          ctx.drawImage(v, dx, dy, dw, dh);
+        } else {
+          ctx.fillStyle = colors[i % colors.length];
+          ctx.fillRect(x, y, cellW, cellH);
+          ctx.fillStyle = '#fff';
+          ctx.font = `${Math.min(cellW, cellH) * 0.35}px monospace`;
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(p.name.charAt(0).toUpperCase() || '?', x + cellW / 2, y + cellH / 2);
+        }
+
+        // Name label.
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+        ctx.fillRect(x, y + cellH - 22, cellW, 22);
+        ctx.fillStyle = '#fff';
+        ctx.font = '13px monospace';
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(p.name.slice(0, 22), x + 5, y + cellH - 11);
+      });
+
+      // REC watermark.
+      ctx.fillStyle = '#ff5252';
+      ctx.font = 'bold 14px monospace';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'alphabetic';
+      ctx.fillText(`● REC ${q.toUpperCase()}`, 8, 18);
+    }
+
+    draw();
+    const drawInterval = window.setInterval(draw, 1000 / dims.fps);
+    drawIntervalRef.current = drawInterval;
+
+    // Combine canvas video + mixed audio into one stream.
+    const canvasStream = canvas.captureStream(dims.fps);
+    const combined = new MediaStream([...canvasStream.getVideoTracks(), ...audioTracks]);
+
+    try {
+      const recorder = new MediaRecorder(combined, {
         mimeType: 'video/webm;codecs=vp8,opus',
-        videoBitsPerSecond: bitrate,
+        videoBitsPerSecond: dims.bitrate,
         audioBitsPerSecond: 128_000,
       });
       chunksRef.current = [];
-      recorder.ondataavailable = (e) => {
-        if (e.data.size > 0) chunksRef.current.push(e.data);
-      };
+      recorder.ondataavailable = (e) => { if (e.data.size > 0) chunksRef.current.push(e.data); };
       recorder.onstop = () => {
         const blob = new Blob(chunksRef.current, { type: 'video/webm' });
         const url = URL.createObjectURL(blob);
@@ -914,29 +1048,38 @@ export default function MeetingRoom() {
       recorder.start(1000);
       recorderRef.current = recorder;
       setRecording(true);
-      showToast(`Recording (${q})`);
-      pushLog(`> /RECORD :: started (${q})`, 'ok');
+      showToast(`Recording all (${q})`);
+      pushLog(`> /RECORD :: composite started (${q})`, 'ok');
     } catch {
       showToast('Recording not supported');
       pushLog('> ERR: recording not supported', 'error');
+      if (drawIntervalRef.current) window.clearInterval(drawIntervalRef.current);
+      drawIntervalRef.current = null;
+      recAudioCtxRef.current?.close().catch(() => {});
+      recAudioCtxRef.current = null;
     }
   }
 
   function stopRecording() {
     recorderRef.current?.stop();
     recorderRef.current = null;
+    if (drawIntervalRef.current) window.clearInterval(drawIntervalRef.current);
+    drawIntervalRef.current = null;
+    recAudioCtxRef.current?.close().catch(() => {});
+    recAudioCtxRef.current = null;
+    recAudioDestRef.current = null;
+    for (const [, v] of recVideoMapRef.current) v.srcObject = null;
+    recVideoMapRef.current.clear();
+    connectedAudioRef.current.clear();
     setRecording(false);
     showToast('Recording saved');
     pushLog('> /RECORD :: stopped, file saved', 'ok');
   }
 
-  function changeQuality(q: 'high' | 'standard' | 'low') {
+  function setQuality(q: 'high' | 'standard' | 'low') {
     setRecQuality(q);
     localStorage.setItem('uplink_rec_quality', q);
-    if (recording) {
-      stopRecording();
-      setTimeout(() => startRecording(q), 200);
-    }
+    showToast(`Quality: ${q}`);
   }
 
   // --- Command parser: the call is driven by slash commands typed in the bar.
@@ -1027,18 +1170,10 @@ export default function MeetingRoom() {
       case 'record':
       case 'rec':
         if (args[0] === 'high' || args[0] === 'standard' || args[0] === 'low') {
-          const q = args[0] as 'high' | 'standard' | 'low';
-          setRecQuality(q);
-          localStorage.setItem('uplink_rec_quality', q);
-          showToast(`Quality: ${q}`);
-          pushLog(`> /RECORD :: quality ${q}`, 'ok');
-          if (recording) {
-            stopRecording();
-            setTimeout(() => startRecording(q), 200);
-          }
+          setQuality(args[0] as 'high' | 'standard' | 'low');
         } else {
           if (recording) stopRecording();
-          else startRecording();
+          else startCompositeRecording();
         }
         break;
       case 'chimes':
@@ -1358,15 +1493,17 @@ export default function MeetingRoom() {
           </div>
 
           <footer className="call__foot">
-            {recording && (
-              <div className="rec-bar">
-                <span className="rec-indicator">● REC</span>
-                <button type="button" className={`rec-q${recQuality === 'high' ? ' rec-q--active' : ''}`} onClick={() => changeQuality('high')}>HIGH</button>
-                <button type="button" className={`rec-q${recQuality === 'standard' ? ' rec-q--active' : ''}`} onClick={() => changeQuality('standard')}>STD</button>
-                <button type="button" className={`rec-q${recQuality === 'low' ? ' rec-q--active' : ''}`} onClick={() => changeQuality('low')}>LOW</button>
+            <div className="rec-bar">
+              {recording && <span className="rec-indicator">● REC</span>}
+              <button type="button" className={`rec-q${recQuality === 'high' ? ' rec-q--active' : ''}`} onClick={() => setQuality('high')} disabled={recording}>HIGH</button>
+              <button type="button" className={`rec-q${recQuality === 'standard' ? ' rec-q--active' : ''}`} onClick={() => setQuality('standard')} disabled={recording}>STD</button>
+              <button type="button" className={`rec-q${recQuality === 'low' ? ' rec-q--active' : ''}`} onClick={() => setQuality('low')} disabled={recording}>LOW</button>
+              {recording ? (
                 <button type="button" className="rec-stop" onClick={stopRecording}>STOP</button>
-              </div>
-            )}
+              ) : (
+                <button type="button" className="rec-start" onClick={() => startCompositeRecording()}>START</button>
+              )}
+            </div>
             <span className="call__foot-room">ROOM: <strong translate="no">{roomId}</strong></span>
             <div className="call__foot-stats">
               <span>LATENCY: {latency == null ? '--' : `${latency}ms`}</span>
