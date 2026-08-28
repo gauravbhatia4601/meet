@@ -1759,3 +1759,5 @@ select.text-input option { background: #000; color: var(--primary); }
   0%, 100% { opacity: 1; }
   50% { opacity: 0.3; }
 }
+.stat--poor { color: var(--warning); }
+.stat--critical { color: var(--danger); }

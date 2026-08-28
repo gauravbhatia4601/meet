@@ -142,6 +142,9 @@ export default function MeetingRoom() {
   const chimeCtxRef = useRef<AudioContext | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
+  const autoVideoOffRef = useRef(false);
+  const poorCountRef = useRef(0);
+  const goodCountRef = useRef(0);
   chatVisibleRef.current = isDesktop || chatOpen;
   chimesOnRef.current = chimesOn;
 
@@ -430,6 +433,29 @@ export default function MeetingRoom() {
       setPeerStats(stats);
       const maxRtt = stats.reduce((m, s) => (s.rttMs != null ? Math.max(m, s.rttMs) : m), 0);
       setLatency(stats.some((s) => s.rttMs != null) ? maxRtt : null);
+
+      // Adaptive video: auto-disable camera on very poor network, keep audio.
+      if (!autoVideoOffRef.current && maxRtt > 500) {
+        poorCountRef.current++;
+        if (poorCountRef.current >= 3 && cameraOnRef.current) {
+          autoVideoOffRef.current = true;
+          poorCountRef.current = 0;
+          showToast('Video paused — poor connection');
+          void toggleCamera();
+        }
+      } else {
+        poorCountRef.current = 0;
+      }
+      if (autoVideoOffRef.current && maxRtt < 200) {
+        goodCountRef.current++;
+        if (goodCountRef.current >= 5) {
+          autoVideoOffRef.current = false;
+          goodCountRef.current = 0;
+          showToast('Connection improved — use /cam to re-enable video');
+        }
+      } else if (maxRtt >= 200) {
+        goodCountRef.current = 0;
+      }
     };
     void measure();
     const id = window.setInterval(measure, 1000);
@@ -1047,9 +1073,13 @@ export default function MeetingRoom() {
       ? 'LINKING'
       : peers.size === 0 || latency == null
         ? 'STANDBY'
-        : latency >= 200
-          ? 'DEGRADED'
-          : 'NOMINAL';
+        : latency >= 800
+          ? 'CRITICAL'
+          : latency >= 400
+            ? 'POOR'
+            : latency >= 200
+              ? 'DEGRADED'
+              : 'NOMINAL';
   const aliasSuggestions = aliases.map((a) => ({ label: `/${a.name}`, description: `alias → /${a.command}` }));
 
   // Active speaker = the peer with the strongest received audio (above noise).

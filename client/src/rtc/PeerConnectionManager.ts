@@ -32,6 +32,7 @@ export class PeerConnectionManager {
   private datachannels = new Map<string, RTCDataChannel>();
   // Previous byte counters per peer, to derive bitrate from getStats() deltas.
   private prevStats = new Map<string, { t: number; bytesIn: number; bytesOut: number }>();
+  maxVideoBitrate = 2_500_000;
   private socket: Socket;
   private cb: PeerCallbacks;
   private localStream: MediaStream;
@@ -316,6 +317,12 @@ export class PeerConnectionManager {
     for (const track of this.localStream.getTracks()) {
       if (track.readyState !== 'live') continue;
       const sender = pc.addTrack(track, this.localStream);
+      if (track.kind === 'video') {
+        const params = sender.getParameters();
+        if (!params.encodings || params.encodings.length === 0) params.encodings = [{}];
+        params.encodings[0].maxBitrate = this.maxVideoBitrate;
+        void sender.setParameters(params);
+      }
       peerSenders.set(track.kind as TrackKind, sender);
     }
 

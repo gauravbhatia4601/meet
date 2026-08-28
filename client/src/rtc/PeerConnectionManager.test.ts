@@ -29,7 +29,7 @@ class FakePeerConnection {
   }
 
   addTrack(track: { kind: string }) {
-    const sender = { kind: track.kind, track, replaceTrack: vi.fn() };
+    const sender = { kind: track.kind, track, replaceTrack: vi.fn(), getParameters: vi.fn(() => ({ encodings: [] })), setParameters: vi.fn(() => Promise.resolve()) };
     this.senders.push(sender);
     return sender;
   }
