@@ -118,6 +118,8 @@ export default function MeetingRoom() {
   const sysLogsRef = useRef<HTMLDivElement>(null);
   const logIdRef = useRef(3);
   const commandInputRef = useRef<HTMLInputElement>(null);
+  const rtcConfigRef = useRef<RTCConfiguration>({ iceServers: [] });
+  const joinedRef = useRef(false);
 
   const rtcRef = useRef<PeerConnectionManager | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
@@ -145,6 +147,30 @@ export default function MeetingRoom() {
     setToast({ id: Date.now(), text });
     if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
     toastTimerRef.current = window.setTimeout(() => setToast(null), 2500);
+  }, []);
+
+  // Extracted RTC callbacks (shared by init and rejoin).
+  const handleStream = useCallback((id: string, s: MediaStream) => {
+    setPeers((prev) => {
+      const next = new Map(prev);
+      const existing = next.get(id);
+      next.set(id, { ...(existing ?? { displayName: '…', micOn: true, cameraOn: true, screenShareOn: false }), stream: s });
+      return next;
+    });
+  }, []);
+
+  const handleRemoteMediaState = useCallback((id: string, state: MediaState) => {
+    setPeers((prev) => {
+      const next = new Map(prev);
+      const existing = next.get(id) ?? { displayName: '…', stream: undefined, micOn: true, cameraOn: true, screenShareOn: false };
+      next.set(id, { ...existing, ...state });
+      return next;
+    });
+  }, []);
+
+  const handleChat = useCallback((id: string, text: string, ts: number) => {
+    if (!chatVisibleRef.current) setUnread((u) => u + 1);
+    setMessages((prev) => [...prev, { from: id, senderName: peersRef.current.get(id)?.displayName ?? '…', text, timestamp: ts }]);
   }, []);
 
   const stopMicMeter = useCallback(() => {
@@ -329,6 +355,9 @@ export default function MeetingRoom() {
     const onConnect = () => {
       setConnError('');
       pushLog('> UPLINK ESTABLISHED', 'ok');
+      if (joinedRef.current) {
+        rejoin();
+      }
     };
     socket.on('connect_error', onConnectError);
     socket.on('disconnect', onDisconnect);
@@ -449,6 +478,7 @@ export default function MeetingRoom() {
         console.warn('[rtc] could not fetch rtc-config, using empty ICE servers', err);
       }
 
+      rtcConfigRef.current = rtcConfig;
       socket.emit('join-room', { roomId: rid, displayName: name }, (res) => {
         if (cancelled) return;
         if (!res.ok) {
@@ -456,32 +486,12 @@ export default function MeetingRoom() {
           return;
         }
         const rtc = new PeerConnectionManager(socket, {
-          onStream: (id, s) => {
-            setPeers((prev) => {
-              const next = new Map(prev);
-              const existing = next.get(id);
-              next.set(id, { ...(existing ?? { displayName: '…', micOn: true, cameraOn: true, screenShareOn: false }), stream: s });
-              return next;
-            });
-          },
-          onRemoteMediaState: (id, state) => {
-            setPeers((prev) => {
-              const next = new Map(prev);
-              const existing = next.get(id) ?? { displayName: '…', stream: undefined, micOn: true, cameraOn: true, screenShareOn: false };
-              next.set(id, { ...existing, ...state });
-              return next;
-            });
-          },
-          onChat: (id, text, ts) => {
-            // E2E message received over a datachannel; attribute by sender id.
-            if (!chatVisibleRef.current) setUnread((u) => u + 1);
-            setMessages((prev) => [
-              ...prev,
-              { from: id, senderName: peersRef.current.get(id)?.displayName ?? '…', text, timestamp: ts },
-            ]);
-          },
+          onStream: handleStream,
+          onRemoteMediaState: handleRemoteMediaState,
+          onChat: handleChat,
         }, stream, rtcConfig);
         rtcRef.current = rtc;
+        joinedRef.current = true;
         setJoined(true);
         pushLog('> SYNC COMPLETE', 'ok');
       });
@@ -747,9 +757,34 @@ export default function MeetingRoom() {
 
   function leaveRoom() {
     navigatedAwayRef.current = true;
+    joinedRef.current = false;
     cleanupMedia();
     setConfirmLeave(false);
     navigate('/');
+  }
+
+  // Network-drop recovery: re-join the room on socket reconnect so the call
+  // survives a brief network drop (Wi-Fi -> cellular, etc.) without a reload.
+  function rejoin() {
+    rtcRef.current?.closeAll();
+    const stream = localStreamRef.current;
+    if (!stream) return;
+    const rtc = new PeerConnectionManager(socket, {
+      onStream: handleStream,
+      onRemoteMediaState: handleRemoteMediaState,
+      onChat: handleChat,
+    }, stream, rtcConfigRef.current);
+    rtcRef.current = rtc;
+    socket.emit('join-room', { roomId, displayName: getDisplayName() }, (res) => {
+      if (!res.ok) {
+        setConnError(res.error ?? 'This meeting no longer exists.');
+        return;
+      }
+      joinedRef.current = true;
+      setJoined(true);
+      pushLog('> UPLINK RESTORED', 'ok');
+      showToast('Reconnected');
+    });
   }
 
   // Send chat E2E over datachannels; fall back to the signaling server only
