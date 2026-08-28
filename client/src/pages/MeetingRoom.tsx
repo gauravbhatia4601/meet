@@ -1435,7 +1435,7 @@ export default function MeetingRoom() {
                     micOn={screenSharing ? micOn : (sharingPeerEntry?.[1]?.micOn ?? true)}
                     cameraOn
                     screenShareOn
-                    isSelfView={screenSharing}
+                    isSelfView={false}
                     isHost={screenSharing ? socket.id === hostId : sharingPeerEntry?.[0] === hostId}
                     raisedHand={screenSharing ? raisedHands.has(socket.id ?? '') : (sharingPeerEntry ? raisedHands.has(sharingPeerEntry[0]) : false)}
                     isActiveSpeaker={screenSharing ? activeSpeakerId === socket.id : (sharingPeerEntry ? activeSpeakerId === sharingPeerEntry[0] : false)}

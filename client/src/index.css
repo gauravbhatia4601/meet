@@ -585,7 +585,8 @@ a {
   }
 }
 .home__footer-brand {
-  font-size: 12px;
+  font-size: 13px;
+  max-width: 85%;
   line-height: 1.2;
   letter-spacing: 0.05em;
   text-transform: uppercase;
@@ -601,7 +602,8 @@ a {
   }
 }
 .home__footer-stats span {
-  font-size: 12px;
+  font-size: 13px;
+  max-width: 85%;
   line-height: 1.2;
   letter-spacing: 0.05em;
   text-transform: uppercase;
@@ -822,7 +824,7 @@ a {
   grid-template-columns: repeat(auto-fill, minmax(min(100%, 240px), 1fr));
   gap: 16px;
   padding: 16px;
-  align-content: start;
+  align-content: center;
 }
 .call__peers--empty {
   display: flex;
@@ -906,7 +908,8 @@ a {
   justify-content: space-between;
   padding: 6px 10px;
   border-bottom: 1px solid var(--outline);
-  font-size: 12px;
+  font-size: 13px;
+  max-width: 85%;
   letter-spacing: 0.05em;
   text-transform: uppercase;
   color: var(--outline);
@@ -916,7 +919,8 @@ a {
   flex: 1;
   overflow-y: auto;
   padding: 8px 10px;
-  font-size: 12px;
+  font-size: 13px;
+  max-width: 85%;
   line-height: 1.4;
   color: var(--text-secondary);
   display: flex;
@@ -1008,7 +1012,8 @@ a {
   color: var(--primary);
   background: transparent;
   font-family: inherit;
-  font-size: 12px;
+  font-size: 13px;
+  max-width: 85%;
   letter-spacing: 0.05em;
   text-transform: uppercase;
   transition: background-color 0.15s ease, color 0.15s ease;
@@ -1061,12 +1066,14 @@ a {
 }
 /* Name tag (top-left) */
 .tile__name {
+  text-shadow: 0 0 4px rgba(0,0,0,0.8);
   position: absolute;
   top: 0;
   left: 0;
   background: var(--primary);
   color: var(--on-primary);
-  font-size: 12px;
+  font-size: 13px;
+  max-width: 85%;
   letter-spacing: 0.05em;
   padding: 2px 8px;
   z-index: 4;
@@ -1091,7 +1098,8 @@ a {
 .tile__badge {
   position: absolute;
   top: 0;
-  font-size: 12px;
+  font-size: 13px;
+  max-width: 85%;
   padding: 2px 8px;
   z-index: 4;
 }
@@ -1170,7 +1178,8 @@ a {
   background: var(--bg);
 }
 .chat__title {
-  font-size: 12px;
+  font-size: 13px;
+  max-width: 85%;
   letter-spacing: 0.05em;
   text-transform: uppercase;
   color: var(--outline);
@@ -1225,7 +1234,8 @@ a {
   color: var(--primary);
 }
 .chat__sender {
-  font-size: 12px;
+  font-size: 13px;
+  max-width: 85%;
   color: var(--secondary);
   margin-right: 4px;
 }
@@ -1546,7 +1556,8 @@ a {
 .gate__placeholder {
   position: absolute; inset: 0;
   display: flex; align-items: center; justify-content: center;
-  color: var(--text-muted); letter-spacing: 0.1em; text-transform: uppercase; font-size: 12px;
+  color: var(--text-muted); letter-spacing: 0.1em; text-transform: uppercase; font-size: 13px;
+  max-width: 85%;
 }
 .gate__hud {
   position: absolute; top: 6px; left: 6px;
@@ -1589,7 +1600,8 @@ a {
   justify-content: space-between;
   padding: 6px 10px;
   border-bottom: 1px solid var(--outline);
-  font-size: 12px;
+  font-size: 13px;
+  max-width: 85%;
   letter-spacing: 0.05em;
   text-transform: uppercase;
   color: var(--outline);
@@ -1604,7 +1616,8 @@ a {
 .diag__close:hover { background: var(--primary-soft); }
 .diag__close:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
 .diag__body { padding: 8px 10px; overflow-y: auto; }
-.diag__empty { color: var(--text-muted); font-size: 12px; }
+.diag__empty { color: var(--text-muted); font-size: 13px;
+  max-width: 85%; }
 .diag__row {
   display: grid;
   grid-template-columns: 1.4fr repeat(6, 1fr) 0.8fr;
@@ -1655,7 +1668,8 @@ a {
   color: var(--text-muted);
   background: transparent;
   font-family: inherit;
-  font-size: 12px;
+  font-size: 13px;
+  max-width: 85%;
   letter-spacing: 0.05em;
 }
 .mc-btn--on { border-color: var(--primary); color: var(--primary); }
@@ -1705,7 +1719,8 @@ select.text-input option { background: #000; color: var(--primary); }
 .device-panel__header {
   display: flex; align-items: center; justify-content: space-between;
   padding: 6px 10px; border-bottom: 1px solid var(--outline);
-  font-size: 12px; letter-spacing: 0.05em; text-transform: uppercase; color: var(--outline);
+  font-size: 13px;
+  max-width: 85%; letter-spacing: 0.05em; text-transform: uppercase; color: var(--outline);
 }
 .device-panel__body { padding: 12px; display: flex; flex-direction: column; gap: 12px; }
 
@@ -1718,7 +1733,8 @@ select.text-input option { background: #000; color: var(--primary); }
 .roster-panel__header {
   display: flex; align-items: center; justify-content: space-between;
   padding: 6px 10px; border-bottom: 1px solid var(--outline);
-  font-size: 12px; letter-spacing: 0.05em; text-transform: uppercase; color: var(--outline);
+  font-size: 13px;
+  max-width: 85%; letter-spacing: 0.05em; text-transform: uppercase; color: var(--outline);
 }
 .roster-panel__body { padding: 8px 10px; overflow-y: auto; }
 .roster__row {
@@ -1867,5 +1883,5 @@ select.text-input option { background: #000; color: var(--primary); }
 
 /* Smaller minimum tile size so more peers fit per row */
 .call__peers {
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, 200px), 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
 }
