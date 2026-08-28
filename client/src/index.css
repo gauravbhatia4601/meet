@@ -1051,7 +1051,7 @@ a {
 .tile__video {
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  object-fit: contain;
 }
 .tile__avatar {
   width: 64px;
@@ -1552,7 +1552,7 @@ a {
   overflow: hidden;
   margin-bottom: 12px;
 }
-.gate__video { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
+.gate__video { width: 100%; height: 100%; object-fit: contain; transform: scaleX(-1); }
 .gate__placeholder {
   position: absolute; inset: 0;
   display: flex; align-items: center; justify-content: center;
