@@ -300,42 +300,62 @@ export default function MeetingRoom() {
     }
     const storedVideoId = localStorage.getItem("uplink_video_device");
     const storedAudioId = localStorage.getItem("uplink_audio_device");
+    // Extracted handlers so the stale-device retry can reuse them.
+    function onAcquired(stream: MediaStream) {
+      if (cancelled) {
+        stream.getTracks().forEach((t) => t.stop());
+        return;
+      }
+      localStreamRef.current = stream;
+      setLocalStream(stream);
+      setMicOn(true);
+      setCameraOn(true);
+      micOnRef.current = true;
+      cameraOnRef.current = true;
+      navigator.mediaDevices.enumerateDevices().then((devices) => {
+        if (cancelled) return;
+        setVideoDevices(devices.filter((d) => d.kind === "videoinput"));
+        setAudioDevices(devices.filter((d) => d.kind === "audioinput"));
+        const videoTrack = stream.getVideoTracks()[0];
+        const audioTrack = stream.getAudioTracks()[0];
+        setSelectedVideoId(storedVideoId || videoTrack?.getSettings().deviceId || "");
+        setSelectedAudioId(storedAudioId || audioTrack?.getSettings().deviceId || "");
+      });
+    }
+
+    function onError(err: unknown) {
+      if (cancelled) return;
+      const name = (err as DOMException)?.name;
+      if (name === 'NotAllowedError') setMediaError('Camera/mic permission denied — you can still join without media.');
+      else if (name === 'NotFoundError') setMediaError('No camera or microphone found — you can still join without media.');
+      else setMediaError('Could not access camera/mic — you can still join without media.');
+      setMicOn(false);
+      setCameraOn(false);
+      micOnRef.current = false;
+      cameraOnRef.current = false;
+    }
+
     navigator.mediaDevices
       .getUserMedia({
         video: storedVideoId ? { deviceId: { exact: storedVideoId } } : true,
         audio: storedAudioId ? { deviceId: { exact: storedAudioId } } : true,
       })
-      .then((stream) => {
-        if (cancelled) {
-          stream.getTracks().forEach((t) => t.stop());
-          return;
+      .then(onAcquired)
+      .catch(async (err) => {
+        // If a stored device ID is stale (device unplugged/changed), clear it
+        // and retry with default devices so the permission prompt still appears.
+        if (storedVideoId || storedAudioId) {
+          localStorage.removeItem('uplink_video_device');
+          localStorage.removeItem('uplink_audio_device');
+          try {
+            const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+            onAcquired(stream);
+            return;
+          } catch {
+            // fall through to the normal error handler
+          }
         }
-        localStreamRef.current = stream;
-        setLocalStream(stream);
-        setMicOn(true);
-        setCameraOn(true);
-        micOnRef.current = true;
-        cameraOnRef.current = true;
-        navigator.mediaDevices.enumerateDevices().then((devices) => {
-          if (cancelled) return;
-          setVideoDevices(devices.filter((d) => d.kind === "videoinput"));
-          setAudioDevices(devices.filter((d) => d.kind === "audioinput"));
-          const videoTrack = stream.getVideoTracks()[0];
-          const audioTrack = stream.getAudioTracks()[0];
-          setSelectedVideoId(storedVideoId || videoTrack?.getSettings().deviceId || "");
-          setSelectedAudioId(storedAudioId || audioTrack?.getSettings().deviceId || "");
-        });
-      })
-      .catch((err) => {
-        if (cancelled) return;
-        const name = (err as DOMException)?.name;
-        if (name === 'NotAllowedError') setMediaError('Camera/mic permission denied — you can still join without media.');
-        else if (name === 'NotFoundError') setMediaError('No camera or microphone found — you can still join without media.');
-        else setMediaError('Could not access camera/mic — you can still join without media.');
-        setMicOn(false);
-        setCameraOn(false);
-        micOnRef.current = false;
-        cameraOnRef.current = false;
+        onError(err);
       });
     return () => {
       cancelled = true;
