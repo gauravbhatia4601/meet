@@ -57,7 +57,7 @@ export default function VideoTile({
   const hasVideo = cameraOn && !!stream;
 
   return (
-    <div className={`tile${isActiveSpeaker ? ' tile--active' : ''}`}>
+    <div className={`tile${isActiveSpeaker ? ' tile--active' : ''}${raisedHand ? ' tile--hand' : ''}`}>
       <video
         ref={videoRef}
         autoPlay

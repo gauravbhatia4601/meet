@@ -94,6 +94,10 @@ export default function MeetingRoom() {
   const [diagOpen, setDiagOpen] = useState(false);
   const [deviceOpen, setDeviceOpen] = useState(false);
   const [rosterOpen, setRosterOpen] = useState(false);
+  const [recording, setRecording] = useState(false);
+  const [recQuality, setRecQuality] = useState<'high' | 'standard' | 'low'>(
+    () => (localStorage.getItem('uplink_rec_quality') as 'high' | 'standard' | 'low') ?? 'high',
+  );
   const [videoDevices, setVideoDevices] = useState<MediaDeviceInfo[]>([]);
   const [audioDevices, setAudioDevices] = useState<MediaDeviceInfo[]>([]);
   const [selectedVideoId, setSelectedVideoId] = useState<string | null>(null);
@@ -136,6 +140,8 @@ export default function MeetingRoom() {
   const chatVisibleRef = useRef(true);
   const chimesOnRef = useRef(chimesOn);
   const chimeCtxRef = useRef<AudioContext | null>(null);
+  const recorderRef = useRef<MediaRecorder | null>(null);
+  const chunksRef = useRef<Blob[]>([]);
   chatVisibleRef.current = isDesktop || chatOpen;
   chimesOnRef.current = chimesOn;
 
@@ -216,8 +222,9 @@ export default function MeetingRoom() {
   }, [stopMicMeter]);
 
   // Subtle terminal beep when peers join/leave (toggle with /chimes).
-  const playChime = useCallback((kind: 'join' | 'leave') => {
-    if (!chimesOnRef.current) return;
+  const playChime = useCallback((kind: 'join' | 'leave' | 'hand') => {
+    // Hand-raise is an alert — always plays; join/leave are ambiance (gated).
+    if (kind !== 'hand' && !chimesOnRef.current) return;
     try {
       const ctx = chimeCtxRef.current ?? (chimeCtxRef.current = new AudioContext());
       if (ctx.state === 'suspended') void ctx.resume();
@@ -226,13 +233,25 @@ export default function MeetingRoom() {
       o.connect(g);
       g.connect(ctx.destination);
       o.type = 'square';
-      o.frequency.value = kind === 'join' ? 880 : 440;
       const t = ctx.currentTime;
-      g.gain.setValueAtTime(0.0001, t);
-      g.gain.exponentialRampToValueAtTime(0.04, t + 0.01);
-      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.15);
-      o.start(t);
-      o.stop(t + 0.16);
+      if (kind === 'hand') {
+        o.frequency.setValueAtTime(660, t);
+        o.frequency.setValueAtTime(990, t + 0.08);
+        g.gain.setValueAtTime(0.0001, t);
+        g.gain.exponentialRampToValueAtTime(0.06, t + 0.01);
+        g.gain.exponentialRampToValueAtTime(0.0001, t + 0.07);
+        g.gain.exponentialRampToValueAtTime(0.06, t + 0.09);
+        g.gain.exponentialRampToValueAtTime(0.0001, t + 0.18);
+        o.start(t);
+        o.stop(t + 0.2);
+      } else {
+        o.frequency.value = kind === 'join' ? 880 : 440;
+        g.gain.setValueAtTime(0.0001, t);
+        g.gain.exponentialRampToValueAtTime(0.04, t + 0.01);
+        g.gain.exponentialRampToValueAtTime(0.0001, t + 0.15);
+        o.start(t);
+        o.stop(t + 0.16);
+      }
     } catch {
       // AudioContext unavailable
     }
@@ -561,6 +580,9 @@ export default function MeetingRoom() {
           else next.add(from);
           return next;
         });
+        playChime('hand');
+        const handName = peersRef.current.get(from)?.displayName ?? 'Someone';
+        showToast(`✋ ${handName} raised their hand`);
         setTimeout(() => {
           setRaisedHands((prev) => {
             const next = new Set(prev);
@@ -815,6 +837,53 @@ export default function MeetingRoom() {
     socket.emit('raise-hand', { roomId });
   }
 
+  function startRecording(quality?: string) {
+    const q = (quality ?? recQuality) as 'high' | 'standard' | 'low';
+    const stream = localStreamRef.current;
+    if (!stream || stream.getTracks().length === 0) {
+      showToast('No media to record');
+      return;
+    }
+    const bitrate = q === 'high' ? 5_000_000 : q === 'standard' ? 2_500_000 : 800_000;
+    try {
+      const recorder = new MediaRecorder(stream, {
+        mimeType: 'video/webm;codecs=vp8,opus',
+        videoBitsPerSecond: bitrate,
+        audioBitsPerSecond: 128_000,
+      });
+      chunksRef.current = [];
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) chunksRef.current.push(e.data);
+      };
+      recorder.onstop = () => {
+        const blob = new Blob(chunksRef.current, { type: 'video/webm' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `uplink-${roomId}-${Date.now()}.webm`;
+        a.click();
+        URL.revokeObjectURL(url);
+        chunksRef.current = [];
+      };
+      recorder.start(1000);
+      recorderRef.current = recorder;
+      setRecording(true);
+      showToast(`Recording (${q})`);
+      pushLog(`> /RECORD :: started (${q})`, 'ok');
+    } catch {
+      showToast('Recording not supported');
+      pushLog('> ERR: recording not supported', 'error');
+    }
+  }
+
+  function stopRecording() {
+    recorderRef.current?.stop();
+    recorderRef.current = null;
+    setRecording(false);
+    showToast('Recording saved');
+    pushLog('> /RECORD :: stopped, file saved', 'ok');
+  }
+
   // --- Command parser: the call is driven by slash commands typed in the bar.
   function runCommand(raw: string) {
     const input = raw.trim();
@@ -899,6 +968,23 @@ export default function MeetingRoom() {
         setRosterOpen((v) => !v);
         pushLog('> /WHO :: people', 'ok');
         showToast(rosterOpen ? 'Roster closed' : 'Roster open');
+        break;
+      case 'record':
+      case 'rec':
+        if (args[0] === 'high' || args[0] === 'standard' || args[0] === 'low') {
+          const q = args[0] as 'high' | 'standard' | 'low';
+          setRecQuality(q);
+          localStorage.setItem('uplink_rec_quality', q);
+          showToast(`Quality: ${q}`);
+          pushLog(`> /RECORD :: quality ${q}`, 'ok');
+          if (recording) {
+            stopRecording();
+            setTimeout(() => startRecording(q), 200);
+          }
+        } else {
+          if (recording) stopRecording();
+          else startRecording();
+        }
         break;
       case 'chimes':
         setChimesOn((v) => !v);
@@ -1213,6 +1299,7 @@ export default function MeetingRoom() {
           </div>
 
           <footer className="call__foot">
+            {recording && <span className="rec-indicator">● REC</span>}
             <span className="call__foot-room">ROOM: <strong translate="no">{roomId}</strong></span>
             <div className="call__foot-stats">
               <span>LATENCY: {latency == null ? '--' : `${latency}ms`}</span>

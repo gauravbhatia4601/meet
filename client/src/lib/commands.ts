@@ -16,6 +16,7 @@ export const COMMANDS: CommandDef[] = [
   { name: 'diag', aliases: ['net'], label: '/diag', description: 'Toggle network diagnostics' },
   { name: 'device', label: '/device', description: 'Switch camera/mic' },
   { name: 'who', aliases: ['people'], label: '/who', description: 'Show participants' },
+  { name: 'record', aliases: ['rec'], label: '/record', description: 'Record call (local, high/standard/low)' },
   { name: 'alias', label: '/alias', description: 'Define a command macro' },
   { name: 'chimes', label: '/chimes', description: 'Toggle join/leave chimes' },
   { name: 'exit', aliases: ['leave', 'quit'], label: '/exit', description: 'Leave the session' },
