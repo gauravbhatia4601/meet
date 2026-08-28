@@ -11,6 +11,7 @@ export default function HomePage() {
   const [creating, setCreating] = useState(false);
   const [latency, setLatency] = useState<number | null>(null);
   const [online, setOnline] = useState(false);
+  const [copied, setCopied] = useState(false);
   const errorRef = useRef<HTMLParagraphElement>(null);
 
   // Move focus to the first error so keyboard and screen-reader users find it.
@@ -88,6 +89,24 @@ export default function HomePage() {
     navigate(`/room/${roomId}`);
   }
 
+  function shareApp() {
+    const url = window.location.origin;
+    if (navigator.share) {
+      navigator
+        .share({
+          title: 'Uplink // Secure Signal',
+          text: 'Secure, real-time, peer-to-peer video meetings in your browser.',
+          url,
+        })
+        .catch(() => {});
+    } else {
+      navigator.clipboard?.writeText(url).then(() => {
+        setCopied(true);
+        window.setTimeout(() => setCopied(false), 2000);
+      }).catch(() => {});
+    }
+  }
+
   return (
     <div className="home">
       <div className="scanline" aria-hidden="true" />
@@ -95,6 +114,9 @@ export default function HomePage() {
       <nav className="home__nav" aria-label="Primary">
         <div className="home__brand">Uplink</div>
         <div className="home__nav-actions">
+          <button type="button" className="home__icon-btn" onClick={shareApp} aria-label="Share Uplink" title="Share Uplink">
+            <ShareIcon />
+          </button>
           <Link to="/about" className="home__icon-btn" aria-label="How it works" title="How it works">
             <HelpIcon />
           </Link>
@@ -169,6 +191,10 @@ export default function HomePage() {
           </span>
         </div>
       </footer>
+
+      {copied && (
+        <div className="toast" role="status" aria-live="polite">Link copied</div>
+      )}
     </div>
   );
 }
@@ -190,6 +216,28 @@ function HelpIcon() {
       <circle cx="12" cy="12" r="10" />
       <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
       <line x1="12" y1="17" x2="12.01" y2="17" />
+    </svg>
+  );
+}
+
+function ShareIcon() {
+  return (
+    <svg
+      width="24"
+      height="24"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <circle cx="18" cy="5" r="3" />
+      <circle cx="6" cy="12" r="3" />
+      <circle cx="18" cy="19" r="3" />
+      <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" />
+      <line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
     </svg>
   );
 }

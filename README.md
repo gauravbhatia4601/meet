@@ -211,6 +211,18 @@ with symmetric NATs (common on mobile/cellular), TURN is required.
 | `CLOUDFLARE_TURN_TOKEN_ID` | *(empty)* | Cloudflare Calls TURN token ID |
 | `CLOUDFLARE_TURN_API_TOKEN` | *(empty)* | Cloudflare Calls API token |
 | `CLOUDFLARE_TURN_TTL` | `86400` | TURN credential lifetime in seconds |
+
+## Public launch checklist
+
+To make Uplink available to people:
+
+1. **Deploy** the Docker image on Coolify (or any host) — `docker compose up -d --build`.
+2. **Point your domain** (e.g. `meet.technioz.com`) at the container on port 3001 with HTTPS (Cloudflare proxy / nginx / Caddy). WebRTC requires HTTPS for camera/mic.
+3. **Set env vars** in Coolify: `CLIENT_ORIGIN` (your public URL), `REDIS_URL` (your Redis container), and the Cloudflare TURN credentials (`CLOUDFLARE_TURN_TOKEN_ID` / `CLOUDFLARE_TURN_API_TOKEN`).
+4. **Share links** — every meeting link (`/room/abc-defg-hij`) works for anyone with the code; no signup needed. The landing page has a share button (Web Share API, clipboard fallback).
+5. **Social previews** — Open Graph / Twitter tags and `og-image.svg` are already in place; swap the domain in `client/index.html` if you deploy elsewhere.
+
+No accounts, no installs — anyone with the link can join.
 | `REDIS_URL` | *(empty)* | Redis URL for room persistence (rejoin after empty/restart). Empty = in-memory |
 | `ROOM_TTL_SECONDS` | `604800` | How long a meeting code stays valid after the last person leaves (7 days) |
 

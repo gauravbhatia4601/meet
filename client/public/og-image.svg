@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+  <rect width="1200" height="630" fill="#000000"/>
+  <rect x="0" y="0" width="1200" height="4" fill="#00ff41"/>
+  <rect x="0" y="626" width="1200" height="4" fill="#00ff41"/>
+  <rect x="0" y="0" width="4" height="630" fill="#00ff41"/>
+  <rect x="1196" y="0" width="4" height="630" fill="#00ff41"/>
+  <text x="80" y="290" font-family="monospace" font-size="76" fill="#00ff41" letter-spacing="4">UPLINK // SECURE_SIGNAL</text>
+  <text x="80" y="370" font-family="monospace" font-size="34" fill="#00ff41" opacity="0.75">Secure, real-time, peer-to-peer video meetings.</text>
+  <text x="80" y="450" font-family="monospace" font-size="30" fill="#00ff41" opacity="0.5">&gt; ENTER_MEETING_CODE_</text>
+  <text x="80" y="540" font-family="monospace" font-size="22" fill="#00ff41" opacity="0.35">NO PLUGINS · NO INSTALLS · NO WAITING</text>
+</svg>
