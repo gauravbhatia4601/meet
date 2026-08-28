@@ -1761,3 +1761,33 @@ select.text-input option { background: #000; color: var(--primary); }
 }
 .stat--poor { color: var(--warning); }
 .stat--critical { color: var(--danger); }
+
+/* --- Recording control bar --- */
+.rec-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.rec-q {
+  padding: 2px 8px;
+  border: 1px solid var(--border-strong);
+  color: var(--text-muted);
+  background: transparent;
+  font-family: inherit;
+  font-size: 10px;
+  letter-spacing: 0.05em;
+}
+.rec-q--active { border-color: var(--primary); color: var(--primary); }
+.rec-q:hover { background: var(--primary-soft); }
+.rec-q:focus-visible { outline: 2px solid var(--primary); outline-offset: 1px; }
+.rec-stop {
+  padding: 2px 10px;
+  border: 1px solid var(--danger);
+  color: var(--danger);
+  background: transparent;
+  font-family: inherit;
+  font-size: 10px;
+  letter-spacing: 0.05em;
+}
+.rec-stop:hover { background: var(--danger); color: #000; }
+.rec-stop:focus-visible { outline: 2px solid var(--danger); outline-offset: 1px; }

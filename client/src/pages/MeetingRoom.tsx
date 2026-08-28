@@ -930,6 +930,15 @@ export default function MeetingRoom() {
     pushLog('> /RECORD :: stopped, file saved', 'ok');
   }
 
+  function changeQuality(q: 'high' | 'standard' | 'low') {
+    setRecQuality(q);
+    localStorage.setItem('uplink_rec_quality', q);
+    if (recording) {
+      stopRecording();
+      setTimeout(() => startRecording(q), 200);
+    }
+  }
+
   // --- Command parser: the call is driven by slash commands typed in the bar.
   function runCommand(raw: string) {
     const input = raw.trim();
@@ -1349,7 +1358,15 @@ export default function MeetingRoom() {
           </div>
 
           <footer className="call__foot">
-            {recording && <span className="rec-indicator">● REC</span>}
+            {recording && (
+              <div className="rec-bar">
+                <span className="rec-indicator">● REC</span>
+                <button type="button" className={`rec-q${recQuality === 'high' ? ' rec-q--active' : ''}`} onClick={() => changeQuality('high')}>HIGH</button>
+                <button type="button" className={`rec-q${recQuality === 'standard' ? ' rec-q--active' : ''}`} onClick={() => changeQuality('standard')}>STD</button>
+                <button type="button" className={`rec-q${recQuality === 'low' ? ' rec-q--active' : ''}`} onClick={() => changeQuality('low')}>LOW</button>
+                <button type="button" className="rec-stop" onClick={stopRecording}>STOP</button>
+              </div>
+            )}
             <span className="call__foot-room">ROOM: <strong translate="no">{roomId}</strong></span>
             <div className="call__foot-stats">
               <span>LATENCY: {latency == null ? '--' : `${latency}ms`}</span>
