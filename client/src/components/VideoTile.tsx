@@ -58,14 +58,20 @@ export default function VideoTile({
 
   return (
     <div className={`tile${isActiveSpeaker ? ' tile--active' : ''}${raisedHand ? ' tile--hand' : ''}`}>
+      {/* The element STAYS mounted: cam-off hides it (avatar shows) without
+          detaching srcObject — remounting it broke the [stream] effect, so a
+          camera off→on cycle never re-attached the media. */}
       <video
         ref={videoRef}
         autoPlay
         playsInline
         muted={isLocal}
         className="tile__video"
-        style={{ transform: isSelfView ? 'scaleX(-1)' : undefined }}
-        aria-label={hasVideo ? name : undefined}
+        style={{
+          display: hasVideo ? undefined : 'none',
+          transform: isSelfView ? 'scaleX(-1)' : undefined,
+        }}
+        aria-label={name}
         aria-hidden={hasVideo ? undefined : true}
       />
 

@@ -13,7 +13,7 @@ import { roomManager, type Room } from './roomManager.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const PORT = Number(process.env.PORT ?? 3001);
+const PORT = Number(process.env.PORT ?? 4123);
 const CLIENT_ORIGIN = process.env.CLIENT_ORIGIN ?? 'http://localhost:5173';
 const NODE_ENV = process.env.NODE_ENV ?? 'development';
 
@@ -160,18 +160,23 @@ function broadcastRoster(room: Room) {
 function broadcastNewPeer(room: Room, socketId: string) {
   for (const peer of room.participants.values()) {
     if (peer.socketId !== socketId) {
+      console.log(`[new-peer] notifying ${peer.socketId} about ${socketId}`);
       io.to(peer.socketId).emit('new-peer', { peerSocketId: socketId });
     }
   }
 }
 
 io.on('connection', (socket: Socket) => {
-  socket.on('create-room', async (callback) => {
+  socket.on('create-room', async (...args) => {
+    // The ack callback is always the LAST argument when present; defend
+    // against clients that send unexpected data args (or none).
+    const callback = typeof args[args.length - 1] === 'function' ? args.pop() : undefined;
     try {
       const roomId = await roomManager.createRoom();
       socket.data.roomId = roomId;
       callback?.({ ok: true, roomId });
     } catch (err) {
+      console.error('[create-room] error', err);
       callback?.({ ok: false, error: (err as Error).message });
     }
   });
@@ -193,16 +198,30 @@ io.on('connection', (socket: Socket) => {
   // These are forwarded verbatim between peers. The server is a dumb relay.
 
   socket.on('offer', ({ to, offer }) => {
+    console.log(`[relay] offer ${socket.id} -> ${to} (${offer ? Object.keys(offer).length : 'null'} keys)`);
     io.to(to).emit('offer', { from: socket.id, offer });
   });
 
   socket.on('answer', ({ to, answer }) => {
+    console.log(`[relay] answer ${socket.id} -> ${to}`);
     io.to(to).emit('answer', { from: socket.id, answer });
   });
 
   socket.on('ice-candidate', ({ to, candidate }) => {
+    if (!iceRelayCount) {
+      console.log(`[relay] first ice-candidate ${socket.id} -> ${to}`);
+    }
+    iceRelayCount++;
     io.to(to).emit('ice-candidate', { from: socket.id, candidate });
   });
+
+  let iceRelayCount = 0;
+  setInterval(() => {
+    if (iceRelayCount) {
+      console.log(`[relay] ice-candidates relayed in last 5s: ${iceRelayCount}`);
+      iceRelayCount = 0;
+    }
+  }, 5000);
 
   // --- Chat ---
   socket.on('chat-message', ({ roomId, text }) => {
@@ -229,6 +248,10 @@ io.on('connection', (socket: Socket) => {
   // time to the signaling server (shown as the live LATENCY readout).
   socket.on('latency:probe', (cb) => {
     cb?.();
+  });
+
+  socket.on('disconnect', (reason) => {
+    console.log(`[disc] ${socket.id} reason=${reason}`);
   });
 
   socket.on('disconnecting', () => {

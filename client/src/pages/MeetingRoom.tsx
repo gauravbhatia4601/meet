@@ -570,11 +570,35 @@ export default function MeetingRoom() {
 
       socket.on('participants', ({ participants: list, hostId: h }) => {
         setHostId(h);
+        const myId = socket.id ?? '';
         setPeers((prev) => {
           const next = new Map(prev);
           const names = new Map(list.map((p) => [p.socketId, p.displayName]));
+          // Update names for known peers.
           for (const [id, state] of next) {
             if (names.has(id)) next.set(id, { ...state, displayName: names.get(id)! });
+          }
+          // Create entries for roster members we haven't seen a stream from
+          // yet (e.g. the terminal, whose video may still be negotiating) —
+          // otherwise their tiles keep the '…'/'null' placeholder forever.
+          // SELF is excluded: the self view renders separately, and adding it
+          // would duplicate the host as a remote tile.
+          for (const p of list) {
+            if (p.socketId === myId) continue;
+            if (!next.has(p.socketId)) {
+              next.set(p.socketId, {
+                displayName: p.displayName,
+                micOn: true,
+                cameraOn: true,
+                screenShareOn: false,
+              });
+            }
+          }
+          // Prune entries whose socket left the roster (zombie tiles after
+          // a peer's socket reconnect).
+          const live = new Set(list.map((p) => p.socketId));
+          for (const id of [...next.keys()]) {
+            if (!live.has(id) && id !== myId) next.delete(id);
           }
           return next;
         });
@@ -685,48 +709,62 @@ export default function MeetingRoom() {
   }
 
   async function toggleMic() {
-    if (micOnRef.current) {
-      const stream = localStreamRef.current;
-      const audioTrack = stream?.getAudioTracks()[0];
-      audioTrack?.stop();
-      if (stream) stream.removeTrack(audioTrack!);
-      rtcRef.current?.replaceLocalTrack('audio', null);
-      micOnRef.current = false;
-      setMicOn(false);
-      updateLocalMediaState({ micOn: false });
+    const audioTrack = localStreamRef.current?.getAudioTracks()[0];
+    if (audioTrack) {
+      const on = !audioTrack.enabled;
+      audioTrack.enabled = on;
+      micOnRef.current = on;
+      setMicOn(on);
+      updateLocalMediaState({ micOn: on });
       return;
     }
 
     const s = await getMedia(false, true);
-    if (!s) return;
-    const audioTrack = s.getAudioTracks()[0];
-    const stream = localStreamRef.current;
-    if (stream) stream.addTrack(audioTrack);
-    rtcRef.current?.replaceLocalTrack('audio', audioTrack);
+    if (!s) {
+      showToast('Mic unavailable — check permissions/devices');
+      return;
+    }
+    const newTrack = s.getAudioTracks()[0];
+    if (!newTrack) {
+      showToast('Mic returned no audio track');
+      return;
+    }
+    localStreamRef.current?.addTrack(newTrack);
+    rtcRef.current?.replaceLocalTrack('audio', newTrack);
     micOnRef.current = true;
     setMicOn(true);
-      updateLocalMediaState({ micOn: true });
+    updateLocalMediaState({ micOn: true });
   }
 
   async function toggleCamera() {
-    if (cameraOnRef.current) {
-      const stream = localStreamRef.current;
-      const videoTrack = stream?.getVideoTracks()[0];
-      videoTrack?.stop();
-      if (stream) stream.removeTrack(videoTrack!);
-      rtcRef.current?.replaceLocalTrack('video', null);
-      cameraOnRef.current = false;
-      setCameraOn(false);
-      updateLocalMediaState({ cameraOn: false });
+    const videoTrack = localStreamRef.current?.getVideoTracks()[0];
+
+    // Standard toggle: flip track.enabled — the device STAYS open. (stop() +
+    // re-acquire breaks on macOS: the terminal holds the camera for the call,
+    // so getUserMedia re-acquisition fails with NotReadableError forever.)
+    if (videoTrack) {
+      const on = !videoTrack.enabled;
+      videoTrack.enabled = on;
+      cameraOnRef.current = on;
+      setCameraOn(on);
+      updateLocalMediaState({ cameraOn: on });
       return;
     }
 
+    // No video track at all (joined without camera): acquire now, attach to
+    // the existing stream + senders.
     const s = await getMedia(true, micOnRef.current);
-    if (!s) return;
-    const videoTrack = s.getVideoTracks()[0];
-    const stream = localStreamRef.current;
-    if (stream) stream.addTrack(videoTrack);
-    rtcRef.current?.replaceLocalTrack('video', videoTrack);
+    if (!s) {
+      showToast('Camera unavailable — check permissions/devices');
+      return;
+    }
+    const newTrack = s.getVideoTracks()[0];
+    if (!newTrack) {
+      showToast('Camera returned no video track');
+      return;
+    }
+    localStreamRef.current?.addTrack(newTrack);
+    rtcRef.current?.replaceLocalTrack('video', newTrack);
     cameraOnRef.current = true;
     setCameraOn(true);
     updateLocalMediaState({ cameraOn: true });

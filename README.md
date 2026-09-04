@@ -34,7 +34,7 @@ npm install
 npm run dev
 ```
 
-- Server: http://localhost:3001 (Socket.io + REST)
+- Server: http://localhost:4123 (Socket.io + REST)
 - Client: http://localhost:5173
 
 Open the client in **two browser tabs** (or two machines) and join the same
@@ -60,12 +60,12 @@ docker compose up -d --build
 ```
 
 The container builds both apps and serves the client from the Express server
-on port `3001` in a single process.
+on port `4123` in a single process.
 
 > **TLS is handled by your existing proxy, not by this stack.** Your domain
 > (e.g. `meet.technioz.com`) is already SSL-protected, so no cert provisioning
 > is needed here. Point your proxy (Cloudflare / nginx / Caddy) at this VPS on
-> port `3001`. WebRTC requires HTTPS for camera/mic, which your proxy provides.
+> port `4123`. WebRTC requires HTTPS for camera/mic, which your proxy provides.
 > Set `CLIENT_ORIGIN` to your public origin (defaults to
 > `https://meet.technioz.com`).
 
@@ -74,7 +74,7 @@ on port `3001` in a single process.
 ```bash
 npm install
 npm run build          # builds client into client/dist
-NODE_ENV=production CLIENT_ORIGIN=http://<host>:3001 npm run start
+NODE_ENV=production CLIENT_ORIGIN=http://<host>:4123 npm run start
 ```
 
 ### Intranet (LAN) deployment
@@ -88,10 +88,10 @@ npm install
 npm run build
 # Your machine's LAN IP, e.g. 192.168.1.50:
 HOST_IP=$(ipconfig getifaddr en0)   # macOS; on Linux use: hostname -I
-NODE_ENV=production CLIENT_ORIGIN="http://$HOST_IP:3001" npm run start
+NODE_ENV=production CLIENT_ORIGIN="http://$HOST_IP:4123" npm run start
 ```
 
-Then open `http://<HOST_IP>:3001` from any device on the intranet. Get your IP
+Then open `http://<HOST_IP>:4123` from any device on the intranet. Get your IP
 with `ipconfig getifaddr en0` (macOS) or `hostname -I` (Linux).
 
 > **HTTPS is required for camera/mic.** Browsers only allow `getUserMedia`
@@ -103,19 +103,19 @@ with `ipconfig getifaddr en0` (macOS) or `hostname -I` (Linux).
 openssl req -x509 -newkey rsa:2048 -nodes \
   -keyout key.pem -out cert.pem -days 365 -subj "/CN=<HOST_IP>"
 
-NODE_ENV=production CLIENT_ORIGIN="https://$HOST_IP:3001" \
+NODE_ENV=production CLIENT_ORIGIN="https://$HOST_IP:4123" \
   TLS_CERT=./cert.pem TLS_KEY=./key.pem npm run start
 ```
 
-Then open `https://<HOST_IP>:3001` and accept the self-signed cert warning. On
+Then open `https://<HOST_IP>:4123` and accept the self-signed cert warning. On
 iOS/Android you may need to install the cert as trusted to use the camera.
 For a fully trusted setup, point a reverse proxy (nginx/Caddy) with a real cert
-at the container's `:3001`.
+at the container's `:4123`.
 
 ### Deployment requirements
 
 - **HTTPS is mandatory** for WebRTC except on `localhost`. Terminate TLS at a
-  reverse proxy (nginx/Caddy/Cloudflare) pointing at the container's `:3001`.
+  reverse proxy (nginx/Caddy/Cloudflare) pointing at the container's `:4123`.
 - Set `CLIENT_ORIGIN` to the app's public origin.
 - **Configure a TURN server** (see below) so calls connect reliably on the
   public internet behind strict NATs/firewalls. Without TURN, some corporate
@@ -141,7 +141,7 @@ and configure these env vars:
 | Env var | Value |
 | ------- | ----- |
 | `NODE_ENV` | `production` |
-| `PORT` | `3001` (or the host's assigned port) |
+| `PORT` | `4123` (or the host's assigned port) |
 | `CLIENT_ORIGIN` | your Vercel app URL, e.g. `https://uplink.vercel.app` |
 | `CLOUDFLARE_TURN_TOKEN_ID` / `CLOUDFLARE_TURN_API_TOKEN` | Cloudflare Calls credentials (required for public internet) |
 
@@ -166,7 +166,7 @@ Set one environment variable in the Vercel dashboard
 
 `VITE_SERVER_URL` is baked into the client at build time. The client uses it for
 both the Socket.io connection and the `GET /api/rtc-config` REST call. In local
-dev it stays empty and the Vite proxy forwards to `localhost:3001`.
+dev it stays empty and the Vite proxy forwards to `localhost:4123`.
 
 **3. Test.** Open the Vercel URL in two browsers/machines and join the same
 meeting code. Both must be on HTTPS (Vercel provides it) for camera/mic to work.
@@ -203,7 +203,7 @@ with symmetric NATs (common on mobile/cellular), TURN is required.
 
 | Env var | Default | Description |
 | ------- | ------- | ----------- |
-| `PORT` | `3001` | Server port |
+| `PORT` | `4123` | Server port |
 | `CLIENT_ORIGIN` | `http://localhost:5173` | CORS / Socket.io origin |
 | `NODE_ENV` | `development` | `production` serves the built client |
 | `TLS_CERT` | *(empty)* | Path to a PEM cert — enables HTTPS when set |
@@ -217,7 +217,7 @@ with symmetric NATs (common on mobile/cellular), TURN is required.
 To make Uplink available to people:
 
 1. **Deploy** the Docker image on Coolify (or any host) — `docker compose up -d --build`.
-2. **Point your domain** (e.g. `meet.technioz.com`) at the container on port 3001 with HTTPS (Cloudflare proxy / nginx / Caddy). WebRTC requires HTTPS for camera/mic.
+2. **Point your domain** (e.g. `meet.technioz.com`) at the container on port 4123 with HTTPS (Cloudflare proxy / nginx / Caddy). WebRTC requires HTTPS for camera/mic.
 3. **Set env vars** in Coolify: `CLIENT_ORIGIN` (your public URL), `REDIS_URL` (your Redis container), and the Cloudflare TURN credentials (`CLOUDFLARE_TURN_TOKEN_ID` / `CLOUDFLARE_TURN_API_TOKEN`).
 4. **Share links** — every meeting link (`/room/abc-defg-hij`) works for anyone with the code; no signup needed. The landing page has a share button (Web Share API, clipboard fallback).
 5. **Social previews** — Open Graph / Twitter tags and `og-image.svg` are already in place; swap the domain in `client/index.html` if you deploy elsewhere.

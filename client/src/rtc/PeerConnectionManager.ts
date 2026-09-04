@@ -62,9 +62,13 @@ export class PeerConnectionManager {
     }, 50);
   }
 
+  /** Candidates that arrived before the remote description was applied. */
+  private pendingIce = new Map<string, RTCIceCandidateInit[]>();
+
   async handleOffer(from: string, offer: RTCSessionDescriptionInit): Promise<void> {
     const pc = this.peers.get(from) ?? this.createPeer(from);
     await pc.setRemoteDescription(offer);
+    await this.flushPendingIce(from, pc);
     const answer = await pc.createAnswer();
     await pc.setLocalDescription(answer);
     this.socket.emit('answer', { to: from, answer });
@@ -74,11 +78,22 @@ export class PeerConnectionManager {
     const pc = this.peers.get(from);
     if (!pc || pc.signalingState === 'stable') return;
     await pc.setRemoteDescription(answer);
+    await this.flushPendingIce(from, pc);
   }
 
   async handleIceCandidate(from: string, candidate: RTCIceCandidateInit): Promise<void> {
     const pc = this.peers.get(from);
     if (!pc) return;
+    // Candidates can legitimately arrive BEFORE the remote description
+    // (answer/offer still in flight). addIceCandidate would throw in that
+    // state, so buffer and flush once the remote description lands —
+    // otherwise ICE never starts (connection stuck in "new").
+    if (!pc.remoteDescription) {
+      const q = this.pendingIce.get(from) ?? [];
+      q.push(candidate);
+      this.pendingIce.set(from, q);
+      return;
+    }
     try {
       await pc.addIceCandidate(candidate);
     } catch (err) {
@@ -86,7 +101,21 @@ export class PeerConnectionManager {
     }
   }
 
+  private async flushPendingIce(from: string, pc: RTCPeerConnection): Promise<void> {
+    const q = this.pendingIce.get(from);
+    if (!q?.length) return;
+    this.pendingIce.delete(from);
+    for (const candidate of q) {
+      try {
+        await pc.addIceCandidate(candidate);
+      } catch (err) {
+        console.warn('[rtc] queued ice candidate error', err);
+      }
+    }
+  }
+
   handlePeerDisconnected(socketId: string): void {
+    this.pendingIce.delete(socketId);
     const pc = this.peers.get(socketId);
     if (pc) {
       pc.close();
@@ -311,6 +340,11 @@ export class PeerConnectionManager {
 
   private createPeer(peerSocketId: string): RTCPeerConnection {
     const pc = new RTCPeerConnection(this.rtcConfig);
+    // Dev instrumentation for e2e tests (headless decode validation).
+    if (typeof window !== 'undefined') {
+      const w = window as unknown as { __pcs?: RTCPeerConnection[] };
+      (w.__pcs ??= []).push(pc);
+    }
     const peerSenders = new Map<TrackKind, RTCRtpSender>();
     this.senders.set(peerSocketId, peerSenders);
 
