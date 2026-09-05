@@ -305,6 +305,13 @@ async fn media_loop(rx: Receiver<MediaEvent>, out: OutSink) {
                 }
             }
             Ok(MediaEvent::Answer { from, desc_json }) => {
+                if std::env::var("UPLINK_DUMP_SDP").is_ok() {
+                    if let Ok(d) = serde_json::from_str::<serde_json::Value>(&desc_json) {
+                        if let Some(sdp) = d["sdp"].as_str() {
+                            let _ = std::fs::write(format!("/tmp/answer-{}.sdp", &from[..8.min(from.len())]), sdp);
+                        }
+                    }
+                }
                 if let Some(block) = peers.get_mut(&from) {
                     match serde_json::from_str::<RTCSessionDescription>(&desc_json)
                         .context("bad answer JSON")
@@ -315,9 +322,25 @@ async fn media_loop(rx: Receiver<MediaEvent>, out: OutSink) {
                                 Ok(d)
                             }
                         }) {
-                        Ok(desc) => {
+                        Ok(mut desc) => {
+                            let unified = unify_sdp_ice(&desc.sdp);
+                            if unified != desc.sdp {
+                                desc = match webrtc::peer_connection::sdp::session_description::RTCSessionDescription::answer(unified) {
+                                    Ok(d) => d,
+                                    Err(e) => {
+                                        overlay_log(&format!("⚠️ answer rebuild: {e}"));
+                                        return;
+                                    }
+                                };
+                            }
+                            let dump_sdp = desc.sdp.clone();
                             if let Err(e) = block.pc.set_remote_description(desc).await {
                                 overlay_log(&format!("⚠️ set remote (answer): {e}"));
+                                // Dump the rejected answer for SDP forensics.
+                                let _ = std::fs::write(
+                                    format!("/tmp/answer-fail-{}.sdp", &from[..8.min(from.len())]),
+                                    &dump_sdp,
+                                );
                             } else {
                                 block.remote_set = true;
                                 overlay_log(&format!("🔗 negotiation done with {from}"));
@@ -586,6 +609,8 @@ async fn decode_task(track: Arc<TrackRemote>, mime: String, ssrc: u32) {
     };
     let mut packets: u64 = 0;
     let mut frames: u64 = 0;
+    let mut aus: u64 = 0;
+    let mut decode_fail: u64 = 0;
     let mut bytes: u64 = 0;
     let mut buf = vec![0u8; 65536];
     let mut last_stat = std::time::Instant::now();
@@ -597,7 +622,23 @@ async fn decode_task(track: Arc<TrackRemote>, mime: String, ssrc: u32) {
                 if packets == 1 {
                     overlay_log("🎬 peer RTP arriving — assembling H264…");
                 }
+                // Diagnostics: first-payload dump + NAL-type histogram so
+                // "pkts but 0 frames" is diagnosable from the overlay.
+                if packets == 1 && !pkt.payload.is_empty() {
+                    let p = &pkt.payload;
+                    overlay_log(&format!(
+                        "🎬 first payload: len={} type={} fu_hdr={:02x}",
+                        p.len(), p[0] & 0x1f, if p.len() > 1 { p[1] } else { 0 }
+                    ));
+                }
                 if let Some(au) = dep.feed(&pkt.payload) {
+                    aus += 1;
+                    if aus == 1 && !au.is_empty() {
+                        overlay_log(&format!(
+                            "🎬 first AU: {} bytes, nal_type={}",
+                            au.len(), au[3] & 0x1f
+                        ));
+                    }
                     match dec.decode(&au) {
                         Ok(Some(yuv)) => {
                             let (w, h) = yuv.dimensions();
@@ -618,7 +659,7 @@ async fn decode_task(track: Arc<TrackRemote>, mime: String, ssrc: u32) {
                                 at: std::time::Instant::now(),
                             });
                         }
-                        _ => {}
+                        _ => decode_fail += 1,
                     }
                 }
                 if last_stat.elapsed() >= Duration::from_secs(1) {
@@ -628,8 +669,8 @@ async fn decode_task(track: Arc<TrackRemote>, mime: String, ssrc: u32) {
                             "🎥 peer video: {frames} decoded @ {packets} pkts — LIVE"
                         ));
                     } else {
-                        set_media(&format!(
-                            "🎥 peer video: {packets} pkts / 0 decoded — waiting for H264 frames…"
+                        overlay_log(&format!(
+                            "🎥 {packets} pkts, {aus} AUs, {decode_fail} decode fails, {bytes} bytes — no frames yet"
                         ));
                     }
                 }
@@ -640,6 +681,46 @@ async fn decode_task(track: Arc<TrackRemote>, mime: String, ssrc: u32) {
     overlay_log(&format!(
         "🎥 remote track ssrc={ssrc} ended after {packets} pkts / {frames} frames"
     ));
+}
+
+/// webrtc-rs 0.13 rejects remote SDPs whose m-lines carry differing
+/// ice-ufrag/pwd values. Our offer includes BUNDLE, but some mobile browsers
+/// still answer with per-m-line credentials — unify them to the first
+/// occurrence so set_remote_description proceeds.
+fn unify_sdp_ice(sdp: &str) -> String {
+    let mut ufrag: Option<String> = None;
+    let mut pwd: Option<String> = None;
+    let mut out = String::with_capacity(sdp.len() + 16);
+    for line in sdp.lines() {
+        if let Some(rest) = line.strip_prefix("a=ice-ufrag:") {
+            let _ = rest;
+            match &ufrag {
+                None => ufrag = Some(line.to_string()),
+                Some(u) => {
+                    if line != u {
+                        out.push_str(u);
+                        out.push('\n');
+                        continue;
+                    }
+                }
+            }
+        } else if let Some(rest) = line.strip_prefix("a=ice-pwd:") {
+            let _ = rest;
+            match &pwd {
+                None => pwd = Some(line.to_string()),
+                Some(p) => {
+                    if line != p {
+                        out.push_str(p);
+                        out.push('\n');
+                        continue;
+                    }
+                }
+            }
+        }
+        out.push_str(line);
+        out.push('\n');
+    }
+    out
 }
 
 /// Everything a media role needs after negotiation wiring.
@@ -696,6 +777,15 @@ pub async fn answer_peer(
         .context("pre-attaching mic transceiver for answer")?;
     }
 
+    let offer = {
+        let mut d = offer;
+        let unified = unify_sdp_ice(&d.sdp);
+        if unified != d.sdp {
+            d = webrtc::peer_connection::sdp::session_description::RTCSessionDescription::offer(unified)
+                .context("offer rebuild")?;
+        }
+        d
+    };
     pc.set_remote_description(offer)
         .await
         .context("set remote (offer)")?;
@@ -777,6 +867,10 @@ pub async fn offer_peer(out: &OutSink, peer_id: &str, publish: bool) -> Result<P
     }
 
     let offer = pc.create_offer(None).await.context("create offer")?;
+    // SDP dump for flow debugging (UPLINK_DUMP_SDP=/path)
+    if let Ok(path) = std::env::var("UPLINK_DUMP_SDP") {
+        let _ = std::fs::write(&path, &offer.sdp);
+    }
     let offer_value = serde_json::to_value(&offer).context("marshal offer")?;
     pc.set_local_description(offer).await.context("set local (offer)")?;
     out.emit("offer", json!({ "to": peer_id, "offer": offer_value }));
