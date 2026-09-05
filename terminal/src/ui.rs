@@ -348,16 +348,12 @@ pub fn paint_deck() {
     let (cols, rows) = crossterm::terminal::size()
         .map(|(c, r)| (c as u16, r as u16))
         .unwrap_or((100, 30));
-    if cols < 20 || rows < 6 {
+    if cols < 40 || rows < 8 {
         return;
     }
     let area = Rect { x: 0, y: 0, width: cols, height: rows };
 
-    // Full-screen viewport: the frame (header/verticals/footer) spans the
-    // entire terminal while the video occupies its cells as an image/text.
-    // The terminal is recreated EVERY paint: fresh diff buffers force the
-    // chrome to re-assert itself over the video (which redraws per frame and
-    // can scroll/cover text). ~2 buffer allocs/frame — negligible.
+    // Fresh terminal each paint → the whole chrome re-asserts over the video.
     let mut guard = TERMINAL.lock().unwrap_or_else(|e| e.into_inner());
     {
         let term = Terminal::with_options(
@@ -372,8 +368,7 @@ pub fn paint_deck() {
     }
     let term = guard.as_mut().unwrap();
 
-    // Snapshot state (drop the ui lock before drawing).
-    let cols_u = cols as usize;
+    // ── snapshot ──
     let (room_code, media, people, tick1, fps, enc, cam_on, mic_on, chat_open, chat_log, input_txt, rtt, call_secs) = {
         let mut ui = ui();
         let Some(ui) = ui.as_mut() else { return };
@@ -418,238 +413,151 @@ pub fn paint_deck() {
     };
 
     use ratatui::style::Color;
-    // Theme: frame edges must be VISIBLE on dark terminal backgrounds —
-    // a medium slate gray, not DarkGray (which disappears).
-    let dim = Style::default().fg(Color::Rgb(120, 128, 140));
-    let frame_c = Style::default().fg(Color::Rgb(110, 118, 130));
+    use ratatui::widgets::{Block, BorderType, Borders, Clear, List, ListItem, ListState};
+
+    // ── palette (Lip Gloss-style: one accent + status colors + muted grays) ──
+    let accent = Color::Rgb(125, 86, 244); // lipgloss purple
+    let ok = Color::Rgb(152, 195, 121);
+    let err = Color::Rgb(224, 108, 117);
+    let warn = Color::Rgb(229, 192, 123);
+    let text_c = Color::Rgb(220, 223, 228);
+    let muted = Color::Rgb(99, 106, 118);
+    let border = Color::Rgb(63, 68, 81);
+    let panel_bg = Color::Rgb(15, 16, 20);
+
     let (dot, state) = if media.contains('⚠') {
-        (Color::Red, "error")
+        (err, "live · issue")
     } else if media.contains('🔗') || media.contains('🎥') || media.contains('🔊') {
-        (Color::Green, "live")
+        (ok, "live")
     } else {
-        (Color::Yellow, "waiting")
+        (warn, "waiting")
     };
 
     let secs_lbl = format!("{:02}:{:02}", call_secs / 60, call_secs % 60);
     let sidebar = sidebar_mode(cols);
-    let bottom_chat = TYPING.load(Ordering::SeqCst) && !sidebar;
+    let sb_x = cols.saturating_sub(SIDEBAR_W);
+    let bold = Modifier::BOLD;
 
-    // ── Header (row 1) ───────────────────────────────────────────────
-    // ASCII-only header: emoji render at different widths per terminal and
-    // garble the diff-painted line (Termius/iTerm2 ambiguity).
-    let mut head = vec![
-        Span::styled("╭─ ", frame_c),
-        Span::styled("* ", Style::default().fg(dot)),
-        Span::styled(state, Style::default().fg(dot).add_modifier(Modifier::BOLD)),
-        Span::styled(format!(" · {} ", secs_lbl), dim),
+    // ── header: lives in the TOP BORDER as block titles ─────────────────
+    let mut h_left = vec![
+        Span::styled(" uplink ", Style::default().fg(accent).add_modifier(bold)),
+        Span::styled("│ ", Style::default().fg(border)),
+        Span::styled("● ", Style::default().fg(dot)),
+        Span::styled(state, Style::default().fg(dot).add_modifier(bold)),
+        Span::styled(format!(" · {} ", secs_lbl), Style::default().fg(text_c)),
+        Span::styled("│ ", Style::default().fg(border)),
         Span::styled(
-            format!("· room {} ", truncate(&room_code, 14)),
-            Style::default().fg(Color::Cyan),
+            format!("room {} ", truncate(&room_code, 14)),
+            Style::default().fg(accent),
         ),
-        Span::styled("· ", dim),
-        Span::raw(truncate(&people, 30)),
-        Span::styled(" ", dim),
+        Span::styled("│ ", Style::default().fg(border)),
+        Span::styled(truncate(&people, 40), Style::default().fg(text_c)),
     ];
-    // Latest event right-aligned via measured width (ratatui handles emoji).
-    if !tick1.is_empty() {
-        let head_w = Line::from(head.clone()).width() as u16;
-        // Strip non-ASCII: events carry emoji that render ambiguously.
+    let h_right = if !tick1.is_empty() {
         let ev_txt: String = tick1.chars().filter(|c| c.is_ascii()).collect();
-        let ev = truncate(ev_txt.trim(), (cols.saturating_sub(head_w + 8)) as usize);
-        let ev_line = Line::from(vec![Span::styled(" > ", dim), Span::raw(ev.clone())]);
-        let ev_w = ev_line.width() as u16;
-        let pad = cols.saturating_sub(head_w + ev_w + 2);
-        head.push(Span::styled("─".repeat(pad as usize), frame_c));
-        for span in ev_line.spans.iter() {
-            head.push(span.clone());
-        }
-    }
-    let head_w = Line::from(head.clone()).width() as u16;
-    head.push(Span::styled(
-        "─".repeat(cols.saturating_sub(head_w + 2) as usize),
-        frame_c,
-    ));
-    head.push(Span::styled("╮", frame_c));
+        Line::from(vec![
+            Span::styled("> ", Style::default().fg(muted)),
+            Span::styled(
+                truncate(ev_txt.trim(), 44),
+                Style::default().fg(muted),
+            ),
+        ])
+        .alignment(ratatui::layout::Alignment::Right)
+    } else {
+        Line::from("").alignment(ratatui::layout::Alignment::Right)
+    };
 
-    // ── Footer buttons row ───────────────────────────────────────────
+    // ── footer: command pills in the BOTTOM BORDER ──────────────────────
     let btns = buttons(cam_on, mic_on, chat_open);
-    let mut btn_line = Vec::new();
-    for (i, (label, style, _)) in btns.iter().enumerate() {
+    let mut f_left = Vec::new();
+    for (i, (label, style, action)) in btns.iter().enumerate() {
         if i > 0 {
-            btn_line.push(Span::raw("  "));
+            f_left.push(Span::styled(" ", Style::default()));
         }
-        btn_line.push(Span::styled(label.clone(), *style));
+        // " c Cam ON " → key + name, single pill bg
+        let (key, rest) = label[1..].split_once(']').unwrap_or((label, ""));
+        let _ = action;
+        f_left.push(Span::styled(
+            format!(" {} ", key),
+            Style::default().fg(accent).add_modifier(bold),
+        ));
+        f_left.push(Span::styled(
+            format!("{} ", rest),
+            (*style).patch(Style::default()),
+        ));
     }
-    let stats = format!("▲ {}fps {}×{} ", fps, enc.0, enc.1)
-        + &if rtt > 0 {
-            format!("· ↕ {}ms ", rtt)
-        } else {
-            String::new()
-        };
-    let btn_w = Line::from(btn_line.clone()).width() as u16;
-    let stats_w = stats.chars().count() as u16;
-    let gap = cols.saturating_sub(btn_w + stats_w + 2);
-    btn_line.push(Span::styled(" ".repeat(gap as usize), dim));
-    btn_line.push(Span::styled(stats, dim));
+    let stats = if rtt > 0 {
+        format!(" {}fps {}x{} · {}ms ", fps, enc.0, enc.1, rtt)
+    } else {
+        format!(" {}fps {}x{} ", fps, enc.0, enc.1)
+    };
+    let f_right = Line::from(Span::styled(stats, Style::default().fg(muted)))
+        .alignment(ratatui::layout::Alignment::Right);
 
-    // ── Sidebar chat content (wide terminals) ────────────────────────
-    let sb_x = cols.saturating_sub(SIDEBAR_W); // first sidebar col
-    let mut chat_msgs: Vec<(String, Style)> = Vec::new();
+    // ── chat panel content ───────────────────────────────────────────────
+    let mut msg_items: Vec<Line> = Vec::new();
     if sidebar {
-        let wrap_w = (SIDEBAR_W.saturating_sub(5)) as usize;
-        for m in chat_log.iter().rev().take(rows.saturating_sub(7) as usize) {
-            let name_c = if m.mine { Color::Cyan } else { Color::Green };
-            // Word-wrap: name shares row 1, continuation indents (max 2 rows).
+        let wrap_w = (SIDEBAR_W.saturating_sub(6)) as usize;
+        for m in chat_log.iter().rev().take(120) {
+            let name_c = if m.mine { accent } else { ok };
             let prefix = format!("{}: ", truncate(&m.name, 10));
             let body = format!("{}{}", prefix, m.text);
             let (l1, l2) = wrap_at(&body, wrap_w);
-            chat_msgs.push((l1, Style::default().fg(name_c)));
+            msg_items.push(Line::from(Span::styled(l1, Style::default().fg(name_c))));
             if let Some(rest) = l2 {
-                chat_msgs.push((format!("  {}", rest), Style::default().fg(Color::Gray)));
+                msg_items.push(Line::from(Span::styled(
+                    format!("  {}", rest),
+                    Style::default().fg(muted),
+                )));
             }
         }
-        // chat_log.iter().rev().take().rev() already yields oldest→newest;
-        // the extra reverse() flipped wrapped continuations ABOVE their heads.
-    }
-
-    // ── Tile name labels drawn OVER the video ────────────────────────
-    let vid_first_row = 1u16; // 0-based row of the video area (row 2 on screen)
-    let vid_cols = video_cols(cols);
-    let label = |name: &str, off: bool| -> Line<'static> {
-        let txt = if off {
-            format!(" {} · cam off ", truncate(name, 18))
-        } else {
-            format!(" {} ", truncate(name, 18))
-        };
-        Line::from(Span::styled(
-            txt,
-            Style::default().fg(Color::White).bg(Color::Rgb(10, 11, 14)),
-        ))
-    };
-    // Label at each tile's top-left: metrics are encode pixels; the image
-    // stretches over the full region, so map by proportion.
-    let (gcols, grows) = *TILE_GRID.lock().unwrap_or_else(|e| e.into_inner());
-    let tnames = TILE_NAMES.lock().unwrap_or_else(|e| e.into_inner()).clone();
-    let (ox, oy, cw, ch) = *TILE_METRICS.lock().unwrap_or_else(|e| e.into_inner());
-    let mut labels: Vec<(u16, u16, Line<'static>)> = Vec::new();
-    for (i, name) in tnames.iter().enumerate() {
-        let gx = (i as u16) % gcols.max(1);
-        let gy = (i as u16) / gcols.max(1);
-        if gx >= gcols || gy >= grows {
-            break;
+        // keep the newest `msg_h` lines
+        let cap = (rows.saturating_sub(9)).max(1) as usize;
+        while msg_items.len() > cap {
+            msg_items.remove(0);
         }
-        let off = i == 0 && !cam_on;
-        labels.push((ox + gx * cw, oy + gy * ch, label(name, off)));
     }
-    let _ = vid_first_row;
 
-    let tiles_empty = tnames.len() <= 1;
     let _ = term.draw(|f| {
-        let area = f.area();
-        let rows_t = area.height;
-        // Header
-        f.render_widget(Paragraph::new(Line::from(head.clone())), Rect { x: 0, y: 0, width: area.width, height: 1 });
-        // Frame verticals (rows 1..rows-2, 0-based)
-        let frame_h = rows_t.saturating_sub(2);
-        let mut verticals = Vec::new();
-        for r in 1..frame_h {
-            verticals.push((
-                Rect { x: 0, y: r, width: 1, height: 1 },
-                Span::styled("│", frame_c),
-            ));
-            verticals.push((
-                Rect { x: area.width - 1, y: r, width: 1, height: 1 },
-                Span::styled("│", frame_c),
-            ));
-        }
-        for (r, sp) in &verticals {
-            f.render_widget(Paragraph::new(Line::from(sp.clone())), *r);
-        }
-        // Bottom border
-        f.render_widget(
-            Paragraph::new(Line::from(vec![
-                Span::styled("╰".to_string(), frame_c),
-                Span::styled("─".repeat(area.width.saturating_sub(2) as usize), frame_c),
-                Span::styled("╯", frame_c),
-            ])),
-            Rect { x: 0, y: frame_h, width: area.width, height: 1 },
-        );
-        // Sidebar (chat) on wide terminals: a filled panel with its own
-        // border, a [x] close button, wrapped messages, and an input line.
-        if sidebar {
-            let sb_area = Rect {
-                x: sb_x,
-                y: 1,
-                width: SIDEBAR_W.saturating_sub(1),
-                height: frame_h.saturating_sub(1),
-            };
-            let panel_bg = Style::default().bg(Color::Rgb(17, 19, 24));
-            // Fill the panel background + left border for the full height.
-            for r in sb_area.y..sb_area.y + sb_area.height {
-                f.render_widget(
-                    Paragraph::new(Line::from(Span::styled(
-                        "│".to_string() + &" ".repeat(sb_area.width.saturating_sub(1) as usize),
-                        panel_bg.patch(frame_c),
-                    ))),
-                    Rect { x: sb_x, y: r, width: sb_area.width, height: 1 },
-                );
-            }
-            // Header: " CHAT ... [x] "
-            f.render_widget(Paragraph::new(Line::from(vec![
-                Span::styled(" CHAT ", Style::default().fg(Color::Cyan).bg(Color::Rgb(17,19,24)).add_modifier(Modifier::BOLD)),
-                Span::styled(
-                    "─".repeat(SIDEBAR_W.saturating_sub(13) as usize),
-                    frame_c.bg(Color::Rgb(17, 19, 24)),
-                ),
-                Span::styled(
-                    " x ",
-                    Style::default()
-                        .fg(Color::Red)
-                        .bg(Color::Rgb(17, 19, 24))
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::styled(" ", panel_bg),
-            ])), Rect { x: sb_x + 1, y: 1, width: SIDEBAR_W.saturating_sub(2), height: 1 });
-            // Messages
-            let msg_h = sb_area.height.saturating_sub(3);
-            let n = chat_msgs.len().min(msg_h as usize);
-            for (i, (text, style)) in chat_msgs.iter().skip(chat_msgs.len() - n).enumerate() {
-                f.render_widget(
-                    Paragraph::new(Line::from(Span::styled(
-                        truncate(text, (SIDEBAR_W - 5) as usize),
-                        (*style).bg(Color::Rgb(17, 19, 24)),
-                    ))),
-                    Rect { x: sb_x + 2, y: 2 + i as u16, width: sb_area.width - 2, height: 1 },
-                );
-            }
-            // Divider + input line at the sidebar bottom
-            f.render_widget(
-                Paragraph::new(Line::from(Span::styled(
-                    "─".repeat((SIDEBAR_W - 3) as usize),
-                    frame_c.bg(Color::Rgb(17, 19, 24)),
-                ))),
-                Rect { x: sb_x + 1, y: sb_area.y + sb_area.height - 2, width: sb_area.width - 1, height: 1 },
-            );
-            let input_y = sb_area.y + sb_area.height - 1;
-            let input_line = if input_txt.is_empty() {
-                Line::from(vec![
-                    Span::styled("❯ …", Style::default().fg(Color::Rgb(120,128,140)).bg(Color::Rgb(17,19,24))),
-                ])
+        // Outer frame: rounded, header + footer live in its borders.
+        let outer = Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(Style::default().fg(border))
+            .style(Style::default().bg(Color::Rgb(10, 11, 14)))
+            .title_top(h_left)
+            .title_top(h_right)
+            .title_bottom(Line::from(f_left.clone()))
+            .title_bottom(f_right);
+        f.render_widget(&outer, area);
+        let inner = outer.inner(area);
+
+        // Tile labels over the video (clamped so names never clip).
+        let label = |name: &str, off: bool| -> Line<'static> {
+            let txt = if off {
+                format!(" {} · cam off ", truncate(name, 18))
             } else {
-                Line::from(vec![
-                    Span::styled("❯ ", Style::default().fg(Color::Cyan).bg(Color::Rgb(17,19,24))),
-                    Span::styled(truncate(&input_txt, (SIDEBAR_W - 7) as usize), Style::default().bg(Color::Rgb(17,19,24))),
-                    Span::styled("▊", Style::default().fg(Color::Cyan).bg(Color::Rgb(17,19,24))),
-                ])
+                format!(" {} ", truncate(name, 18))
             };
-            f.render_widget(
-                Paragraph::new(input_line),
-                Rect { x: sb_x + 2, y: input_y, width: sb_area.width - 2, height: 1 },
-            );
+            Line::from(Span::styled(
+                txt,
+                Style::default().fg(Color::White).bg(Color::Rgb(10, 11, 14)),
+            ))
+        };
+        let (gcols, grows) = *TILE_GRID.lock().unwrap_or_else(|e| e.into_inner());
+        let tnames = TILE_NAMES.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        let (ox, oy, cw, ch) = *TILE_METRICS.lock().unwrap_or_else(|e| e.into_inner());
+        let mut labels: Vec<(u16, u16, Line)> = Vec::new();
+        for (i, name) in tnames.iter().enumerate() {
+            let gx = (i as u16) % gcols.max(1);
+            let gy = (i as u16) / gcols.max(1);
+            if gx >= gcols || gy >= grows {
+                break;
+            }
+            let off = i == 0 && !cam_on;
+            labels.push((ox + gx * cw, oy + gy * ch, label(name, off)));
         }
-        // Tile labels over the video — clamped so names never clip past the
-        // frame or into the sidebar.
-        let right_edge = if sidebar { sb_x } else { area.width - 1 };
+        let right_edge = if sidebar { sb_x } else { inner.right() };
         for (x, y, line) in &labels {
             let w = line.width() as u16;
             let x = (*x).max(2).min(right_edge.saturating_sub(w + 1));
@@ -658,34 +566,104 @@ pub fn paint_deck() {
                 Rect { x, y: *y, width: w, height: 1 },
             );
         }
-        // Idle state: no peers on screen → a dim hint over the bottom of the
-        // video so the code is discoverable.
-        if tiles_empty {
+
+        // Idle state hint (bottom-left of the video region).
+        if tnames.len() <= 1 {
             let hint = "alone in the room — share the code";
-            let hint_line = Line::from(Span::styled(hint, dim));
             f.render_widget(
-                Paragraph::new(hint_line),
+                Paragraph::new(Line::from(Span::styled(hint, Style::default().fg(muted)))),
                 Rect {
                     x: 2,
-                    y: frame_h - 1,
+                    y: inner.bottom() - 1,
                     width: hint.len() as u16,
                     height: 1,
                 },
             );
         }
-        // Buttons row
-        f.render_widget(
-            Paragraph::new(Line::from(btn_line.clone())),
-            Rect { x: 0, y: frame_h + 1, width: area.width, height: 1 },
-        );
+
+        // ── Chat panel: a real bordered block with a close title ─────────
+        if sidebar {
+            let sb = Rect {
+                x: sb_x,
+                y: inner.y,
+                width: SIDEBAR_W,
+                height: inner.height,
+            };
+            let sb_block = Block::default()
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(Style::default().fg(accent))
+                .style(Style::default().bg(panel_bg))
+                .title_top(
+                    Line::from(Span::styled(
+                        " Chat ",
+                        Style::default().fg(accent).add_modifier(bold),
+                    ))
+                    .alignment(ratatui::layout::Alignment::Left),
+                )
+                .title_top(
+                    Line::from(Span::styled(
+                        " x ",
+                        Style::default().fg(err).add_modifier(bold),
+                    ))
+                    .alignment(ratatui::layout::Alignment::Right),
+                );
+            f.render_widget(Clear, sb);
+            f.render_widget(&sb_block, sb);
+            let sb_inner = sb_block.inner(sb);
+
+            // Messages list (wrapped, newest at bottom)
+            let msg_area = Rect {
+                x: sb_inner.x,
+                y: sb_inner.y,
+                width: sb_inner.width,
+                height: sb_inner.height.saturating_sub(3),
+            };
+            let items: Vec<ListItem> = msg_items
+                .iter()
+                .map(|l| ListItem::new(l.clone()))
+                .collect();
+            let list = List::new(items).style(Style::default().bg(panel_bg));
+            f.render_stateful_widget(list, msg_area, &mut ListState::default());
+
+            // Input: a bordered field at the bottom of the panel
+            let in_area = Rect {
+                x: sb_inner.x,
+                y: sb_inner.bottom().saturating_sub(3),
+                width: sb_inner.width,
+                height: 3,
+            };
+            let in_block = Block::default()
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(Style::default().fg(if input_txt.is_empty() { muted } else { accent }))
+                .title_top(Line::from(Span::styled(
+                    " message — enter sends, esc closes ",
+                    Style::default().fg(muted),
+                )));
+            f.render_widget(&in_block, in_area);
+            let in_inner = in_block.inner(in_area);
+            let in_line = if input_txt.is_empty() {
+                Line::from(Span::styled("…", Style::default().fg(muted)))
+            } else {
+                Line::from(vec![
+                    Span::styled(input_txt.clone(), Style::default().fg(text_c)),
+                    Span::styled("▊", Style::default().fg(accent)),
+                ])
+            };
+            f.render_widget(
+                Paragraph::new(in_line),
+                Rect { x: in_inner.x, y: in_inner.y, width: in_inner.width, height: 1 },
+            );
+        }
     });
 
-    // Click targets: footer buttons + the chat [x] close control.
+    // Click targets: footer pills (in the bottom border row) + chat [x].
     let mut rects = button_layout(cam_on, mic_on, chat_open, rows.saturating_sub(1));
     if sidebar {
         rects.push((
             Rect {
-                x: sb_x + SIDEBAR_W - 6,
+                x: sb_x + SIDEBAR_W - 5,
                 y: 1,
                 width: 4,
                 height: 1,
@@ -696,49 +674,58 @@ pub fn paint_deck() {
     *BUTTONS.lock().unwrap_or_else(|e| e.into_inner()) = rects;
 }
 
-
 /// The five deck buttons: label carries the keyboard shortcut, colour the
 /// state (green = on, red = off/leave, cyan = copy/chat).
 fn buttons(cam_on: bool, mic_on: bool, chat_open: bool) -> Vec<(String, Style, Action)> {
     use ratatui::style::Color;
-    let on_off = |on: bool| {
+    // Pill: bg = state color, fg = near-black. Lip Gloss look in one row.
+    let pill = |bg: Color, on: bool| {
         Style::default()
-            .fg(if on { Color::Green } else { Color::Red })
-            .add_modifier(Modifier::REVERSED)
+            .fg(if on { Color::Rgb(10, 11, 14) } else { Color::White })
+            .bg(bg)
+            .add_modifier(Modifier::BOLD)
     };
+    let on_off = |on: bool| pill(if on { ok_c() } else { err_c() }, on);
     vec![
         (
-            format!("[c] CAM {}", if cam_on { "ON" } else { "OFF" }),
+            if cam_on { " c Cam on " } else { " c Cam off " }.to_string(),
             on_off(cam_on),
             Action::ToggleCamera,
         ),
         (
-            format!("[m] MIC {}", if mic_on { "ON" } else { "OFF" }),
+            if mic_on { " m Mic on " } else { " m Mic off " }.to_string(),
             on_off(mic_on),
             Action::ToggleMic,
         ),
         (
-            if chat_open { "[t] CHAT ▾" } else { "[t] CHAT" }.to_string(),
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::REVERSED),
+            " t Chat ".to_string(),
+            pill(accent_c(), chat_open),
             Action::OpenChat,
         ),
         (
-            "[y] COPY CODE".to_string(),
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::REVERSED),
+            " y Copy code ".to_string(),
+            pill(cyan_c(), false),
             Action::CopyCode,
         ),
         (
-            "[q] LEAVE".to_string(),
-            Style::default()
-                .fg(Color::Red)
-                .add_modifier(Modifier::REVERSED),
+            " q Leave ".to_string(),
+            pill(err_c(), false),
             Action::Leave,
         ),
     ]
+}
+
+fn ok_c() -> ratatui::style::Color {
+    ratatui::style::Color::Rgb(152, 195, 121)
+}
+fn err_c() -> ratatui::style::Color {
+    ratatui::style::Color::Rgb(224, 108, 117)
+}
+fn cyan_c() -> ratatui::style::Color {
+    ratatui::style::Color::Rgb(86, 182, 194)
+}
+fn accent_c() -> ratatui::style::Color {
+    ratatui::style::Color::Rgb(125, 86, 244)
 }
 
 /// Hit rects for the button row, derived from the same labels that get
@@ -746,11 +733,11 @@ fn buttons(cam_on: bool, mic_on: bool, chat_open: bool) -> Vec<(String, Style, A
 /// 2-space gaps; 2-space left indent. `y` in absolute screen coords.
 fn button_layout(cam_on: bool, mic_on: bool, chat_open: bool, y: u16) -> Vec<(Rect, Action)> {
     let mut rects = Vec::new();
-    let mut x: u16 = 2; // leading indent, must match the painted "  "
+    let mut x: u16 = 2; // inside the rounded border, 1 pad from the corner
     for (label, _, action) in buttons(cam_on, mic_on, chat_open) {
         let w = label.chars().count() as u16;
         rects.push((Rect { x, y, width: w, height: 1 }, action));
-        x += w + 2; // gap, matches the painted "  "
+        x += w + 1; // gap, matches the painted " "
     }
     rects
 }
@@ -1102,25 +1089,25 @@ mod tests {
         let rows = 40u16;
         *BUTTONS.lock().unwrap_or_else(|e| e.into_inner()) =
             button_layout(true, true, false, rows - 1);
-        // Rects must match the painted labels exactly (ASCII, 2-space gaps).
+        // Pills: ` c Cam on `(10) + 1 gap → ` m Mic on `(10) + gap →
+        // ` t Chat `(8) + gap → ` y Copy code `(13) + gap → ` q Leave `(9).
         assert_eq!(
             BUTTONS.lock().unwrap()[0].0,
-            Rect { x: 2, y: rows - 1, width: 10, height: 1 } // "[c] CAM ON"
+            Rect { x: 2, y: rows - 1, width: 10, height: 1 }
         );
-        // SGR coords are 1-based. Layout on-state:
-        // CAM(2..12) MIC(14..24) CHAT(26..34) COPY(36..49) LEAVE(51..60)
+        // SGR coords are 1-based.
         assert_eq!(hit_test(3, rows), Some(Action::ToggleCamera));
-        assert_eq!(hit_test(12, rows), Some(Action::ToggleCamera)); // last CAM cell
-        assert_eq!(hit_test(15, rows), Some(Action::ToggleMic));
-        assert_eq!(hit_test(28, rows), Some(Action::OpenChat)); // CHAT button
-        assert_eq!(hit_test(38, rows), Some(Action::CopyCode));
-        assert_eq!(hit_test(55, rows), Some(Action::Leave));
-        assert_eq!(hit_test(55, rows - 3), None); // wrong row
-        assert_eq!(hit_test(90, rows), None); // beyond all buttons
-        // Off-state labels are wider — rects must track the state.
+        assert_eq!(hit_test(11, rows), Some(Action::ToggleCamera)); // last CAM cell
+        assert_eq!(hit_test(14, rows), Some(Action::ToggleMic));
+        assert_eq!(hit_test(26, rows), Some(Action::OpenChat));
+        assert_eq!(hit_test(37, rows), Some(Action::CopyCode));
+        assert_eq!(hit_test(52, rows), Some(Action::Leave));
+        assert_eq!(hit_test(52, rows - 2), None); // wrong row (footer row = rows-1)
+        assert_eq!(hit_test(95, rows), None); // beyond all buttons
+        // Off-state pills are wider — rects must track the state.
         let off = button_layout(false, false, false, rows - 1);
-        assert_eq!(off[0].0.width, 11); // "[c] CAM OFF"
-        assert_eq!(off[1].0.x, off[0].0.x + 13);
+        assert_eq!(off[0].0.width, 11); // " c Cam off "
+        assert_eq!(off[1].0.x, off[0].0.x + 12);
         BUTTONS.lock().unwrap_or_else(|e| e.into_inner()).clear();
     }
 }

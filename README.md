@@ -63,11 +63,11 @@ The container builds both apps and serves the client from the Express server
 on port `4123` in a single process.
 
 > **TLS is handled by your existing proxy, not by this stack.** Your domain
-> (e.g. `meet.technioz.com`) is already SSL-protected, so no cert provisioning
+> (e.g. `meet.heygauravbhatia.com`) is already SSL-protected, so no cert provisioning
 > is needed here. Point your proxy (Cloudflare / nginx / Caddy) at this VPS on
 > port `4123`. WebRTC requires HTTPS for camera/mic, which your proxy provides.
 > Set `CLIENT_ORIGIN` to your public origin (defaults to
-> `https://meet.technioz.com`).
+> `https://meet.heygauravbhatia.com`).
 
 ### Manual
 
@@ -217,7 +217,7 @@ with symmetric NATs (common on mobile/cellular), TURN is required.
 To make Uplink available to people:
 
 1. **Deploy** the Docker image on Coolify (or any host) — `docker compose up -d --build`.
-2. **Point your domain** (e.g. `meet.technioz.com`) at the container on port 4123 with HTTPS (Cloudflare proxy / nginx / Caddy). WebRTC requires HTTPS for camera/mic.
+2. **Point your domain** (e.g. `meet.heygauravbhatia.com`) at the container on port 4123 with HTTPS (Cloudflare proxy / nginx / Caddy). WebRTC requires HTTPS for camera/mic.
 3. **Set env vars** in Coolify: `CLIENT_ORIGIN` (your public URL), `REDIS_URL` (your Redis container), and the Cloudflare TURN credentials (`CLOUDFLARE_TURN_TOKEN_ID` / `CLOUDFLARE_TURN_API_TOKEN`).
 4. **Share links** — every meeting link (`/room/abc-defg-hij`) works for anyone with the code; no signup needed. The landing page has a share button (Web Share API, clipboard fallback).
 5. **Social previews** — Open Graph / Twitter tags and `og-image.svg` are already in place; swap the domain in `client/index.html` if you deploy elsewhere.

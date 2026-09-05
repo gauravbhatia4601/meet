@@ -47,7 +47,7 @@ enum Command {
         #[arg(long, short)]
         name: Option<String>,
         /// Signaling server base URL
-        #[arg(long, default_value = "http://127.0.0.1:4123")]
+        #[arg(long, default_value = "wss://meet.heygauravbhatia.com")]
         server: String,
         /// Signaling only — do not start the camera after joining
         #[arg(long)]
@@ -61,7 +61,7 @@ enum Command {
         #[arg(long, short)]
         name: Option<String>,
         /// Signaling server base URL
-        #[arg(long, default_value = "http://127.0.0.1:4123")]
+        #[arg(long, default_value = "wss://meet.heygauravbhatia.com")]
         server: String,
         /// Signaling only — do not start the camera after creating
         #[arg(long)]
@@ -81,7 +81,7 @@ enum Command {
         #[arg(long, short, default_value = "Probe")]
         name: String,
         /// Signaling server base URL
-        #[arg(long, default_value = "http://127.0.0.1:4123")]
+        #[arg(long, default_value = "wss://meet.heygauravbhatia.com")]
         server: String,
         /// Seconds to run
         #[arg(long, default_value = "20")]

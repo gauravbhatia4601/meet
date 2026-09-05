@@ -6,7 +6,7 @@
 # built client on :3001. Create a `.env` file in this directory to supply the
 # variables below (see `.env.example`).
 #
-# TLS is NOT handled here: your domain (e.g. meet.technioz.com) is already
+# TLS is NOT handled here: your domain (e.g. meet.heygauravbhatia.com) is already
 # SSL-protected by your existing proxy (Cloudflare / nginx / Caddy). Point that
 # proxy at this VPS on port 3001. WebRTC requires HTTPS in production
 # (camera/mic are only allowed in a secure context), which your proxy provides.
@@ -20,8 +20,8 @@ services:
     environment:
       NODE_ENV: production
       PORT: 3001
-      # Your public origin, e.g. https://meet.technioz.com
-      CLIENT_ORIGIN: ${CLIENT_ORIGIN:-https://meet.technioz.com}
+      # Your public origin, e.g. https://meet.heygauravbhatia.com
+      CLIENT_ORIGIN: ${CLIENT_ORIGIN:-https://meet.heygauravbhatia.com}
       # --- TURN relay (REQUIRED for reliable calls on the public internet) ---
       # TURN/STUN URLs are fetched from the Cloudflare API on the fly, so no
       # TURN URL variables are needed. Only set the Cloudflare credentials.

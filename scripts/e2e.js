@@ -44,7 +44,7 @@ const probeSnapshot = () => {
 
   const spawnProbe = () => spawn(
     '/Users/gauravbhatia/meet-clone/terminal/target/release/uplink-terminal',
-    ['decode-probe', room, '--name', 'Probe', '--secs', String(RUN_SECS + 10), '--fake-cam', '--toggle-cam-at', '12'],
+    ['decode-probe', room, '--name', 'Probe', '--server', 'ws://localhost:4123', '--secs', String(RUN_SECS + 10), '--fake-cam', '--toggle-cam-at', '12'],
     { env: { ...process.env, UPLINK_WEBRTC_DEBUG: '1' } },
   );
   let probe;
