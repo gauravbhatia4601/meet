@@ -130,6 +130,31 @@ fn http_url(server: &str) -> String {
         .replacen("wss://", "https://", 1)
 }
 
+/// Connect with retries: transient proxy/CDN garbage (Cloudflare 5xx pages,
+/// dropped chunked bodies) surfaces as engine.io parse errors that a single
+/// attempt turns into a hard failure.
+fn connect_with_retry(
+    builder: ClientBuilder,
+    media_tx: std::sync::mpsc::Sender<MediaEvent>,
+) -> anyhow::Result<rust_socketio::client::Client> {
+    let mut last: Option<anyhow::Error> = None;
+    for attempt in 1..=3 {
+        match log_events(builder.clone(), media_tx.clone()).connect() {
+            Ok(s) => return Ok(s),
+            Err(e) => {
+                let err = anyhow::Error::new(e)
+                    .context(format!("socket.io connect attempt {attempt}/3 failed"));
+                overlay_log(&format!(
+                    "⚠️ connect attempt {attempt}/3 failed — retrying…"
+                ));
+                last = Some(err);
+                std::thread::sleep(Duration::from_millis(600 * attempt as u64));
+            }
+        }
+    }
+    Err(last.unwrap().context("socket.io connect failed"))
+}
+
 fn wait_ack(slot: &AckSlot) -> Result<()> {
     loop {
         if !RUNNING.load(Ordering::SeqCst) {
@@ -422,9 +447,7 @@ pub fn join_room(server: &str, code: &str, name: &str, video_cfg: Option<VideoOp
             }
         });
 
-    let socket = log_events(builder, media_tx)
-        .connect()
-        .context("socket.io connect failed")?;
+    let socket = connect_with_retry(builder, media_tx)?;
     rtc::start_with_publish(media_rx, Arc::new(socket.clone()), video_cfg.is_some());
 
     wait_ack(&first_slot)?;
