@@ -470,21 +470,14 @@ pub fn paint_deck() {
     // ── footer: command pills in the BOTTOM BORDER ──────────────────────
     let btns = buttons(cam_on, mic_on, chat_open);
     let mut f_left = Vec::new();
-    for (i, (label, style, action)) in btns.iter().enumerate() {
+    for (i, (label, style, _)) in btns.iter().enumerate() {
         if i > 0 {
-            f_left.push(Span::styled(" ", Style::default()));
+            // separator: plain, no bg — must match button_layout's 1-col gap
+            f_left.push(Span::raw(" "));
         }
-        // " c Cam ON " → key + name, single pill bg
-        let (key, rest) = label[1..].split_once(']').unwrap_or((label, ""));
-        let _ = action;
-        f_left.push(Span::styled(
-            format!(" {} ", key),
-            Style::default().fg(accent).add_modifier(bold),
-        ));
-        f_left.push(Span::styled(
-            format!("{} ", rest),
-            (*style).patch(Style::default()),
-        ));
+        // One span per pill: bg covers the whole label, exactly as wide as
+        // the hit rect in button_layout (which uses these same labels).
+        f_left.push(Span::styled(label.clone(), *style));
     }
     let stats = if rtt > 0 {
         format!(" {}fps {}x{} · {}ms ", fps, enc.0, enc.1, rtt)
@@ -638,7 +631,7 @@ pub fn paint_deck() {
                 .border_type(BorderType::Rounded)
                 .border_style(Style::default().fg(if input_txt.is_empty() { muted } else { accent }))
                 .title_top(Line::from(Span::styled(
-                    " message — enter sends, esc closes ",
+                    " enter=send · esc=closes ",
                     Style::default().fg(muted),
                 )));
             f.render_widget(&in_block, in_area);
