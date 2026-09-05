@@ -1069,7 +1069,11 @@ fn extract_sps_pps(bits: &[u8]) -> Option<Vec<u8>> {
 }
 
 pub fn h264_codec_parameters() -> Vec<RTCRtpCodecParameters> {
+    // Mobile browsers (Safari iOS, Samsung Internet, some Android builds)
+    // only negotiate CONSTRAINED BASELINE (42e01f) — offer it first alongside
+    // the plain-baseline variants desktop Chrome accepts.
     vec![
+        h264("level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f", 108u8),
         h264("level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42001f", 102u8),
         h264("level-asymmetry-allowed=1;packetization-mode=0;profile-level-id=42001f", 127u8),
     ]
