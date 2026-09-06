@@ -671,6 +671,29 @@ export default function MeetingRoom() {
 
     void init();
 
+    // Screen wake lock: without it, locking the phone or switching apps
+    // fires pagehide, which suspends the page and kills WebRTC media.
+    let wakeLock: { release: () => Promise<void>; addEventListener: (t: string, cb: () => void) => void } | null = null;
+    let released = false;
+    const acquireWakeLock = async () => {
+      if (released || !('wakeLock' in navigator)) return;
+      try {
+        wakeLock = await (navigator as unknown as {
+          wakeLock: { request: (t: 'screen') => Promise<typeof wakeLock> };
+        }).wakeLock.request('screen');
+        wakeLock?.addEventListener('release', () => {
+          wakeLock = null;
+        });
+      } catch {
+        // denied or unsupported — the call still works, just suspend-prone
+      }
+    };
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') void acquireWakeLock();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    void acquireWakeLock();
+
     // Belt-and-suspenders for hard reloads: stop local tracks so the camera
     // LED turns off and the OS doesn't keep the device busy on the fresh tab.
     function handlePageHide() {
@@ -681,6 +704,9 @@ export default function MeetingRoom() {
 
     return () => {
       cancelled = true;
+      released = true;
+      document.removeEventListener('visibilitychange', onVisible);
+      wakeLock?.release().catch(() => {});
       window.removeEventListener('pagehide', handlePageHide);
       if (navigatedAwayRef.current) {
         // Only close peers on real navigation (not just re-renders). On
