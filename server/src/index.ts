@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import { startStunServer as startStun } from './stun.js';
 import http from 'node:http';
 import https from 'node:https';
 import fs from 'node:fs';
@@ -35,6 +36,37 @@ const STUN_SERVERS: RTCIceServer[] = [
   { urls: 'stun:stun.l.google.com:19302' },
   { urls: 'stun:stun1.l.google.com:19302' },
 ];
+
+/**
+ * Self-hosted STUN server (server/src/stun.ts): a tiny RFC 8489 binding-only
+ * UDP responder started alongside signaling. STUN_PORT defaults to 3478 —
+ * the standard STUN port. Advertised to clients via /api/rtc-config as
+ * `stun:<host>:<port>` where host is derived from the request Host header
+ * (or SELF_STUN_HOST when set), so LAN + public deployments both work.
+ */
+const STUN_PORT = Number(process.env.STUN_PORT ?? 3478);
+const SELF_STUN_HOST = process.env.SELF_STUN_HOST ?? '';
+
+// In-process: same container, same deploy, no extra infrastructure.
+let stunStarted = false;
+function startStunServer(): void {
+  if (stunStarted) return;
+  stunStarted = true;
+  try {
+    startStun();
+  } catch (err) {
+    console.error('[stun] failed to start:', (err as Error).message);
+  }
+}
+
+function stunUrlForHost(host: string | undefined): string {
+  // Host header is "domain[:port]" — the browser-facing TLS port has nothing
+  // to do with the STUN UDP port, so only strip the signaling port if the
+  // header carries one.
+  const hostname = (host ?? '').split(':')[0] || SELF_STUN_HOST || '';
+  if (!hostname) return '';
+  return `stun:${hostname}:${STUN_PORT}`;
+}
 
 /**
  * Mint short-lived Cloudflare TURN/STUN ICE servers via the Cloudflare API.
@@ -110,8 +142,15 @@ app.get('/health', (_req, res) => {
 });
 
 /** Serve the WebRTC ICE configuration (STUN + optional TURN) to clients. */
-app.get('/api/rtc-config', async (_req, res) => {
-  res.json({ iceServers: await buildIceServers() });
+app.get('/api/rtc-config', async (req, res) => {
+  const iceServers = await buildIceServers();
+  const selfStun = stunUrlForHost(req.headers.host as string | undefined);
+  // Our own STUN first: it is on the same box as signaling, so it answers
+  // fastest and works on the LAN even without internet access.
+  const ice = selfStun
+    ? [{ urls: selfStun }, ...iceServers]
+    : iceServers;
+  res.json({ iceServers: ice });
 });
 
 /** Create a new room and return its code. */
@@ -271,3 +310,6 @@ server.listen(PORT, '0.0.0.0', () => {
   const scheme = tlsCredentials ? 'https' : 'http';
   console.log(`[server] ${scheme} listening on :${PORT} (${NODE_ENV})`);
 });
+
+// Self-hosted STUN rides on the same process (UDP 3478 by default).
+startStunServer();

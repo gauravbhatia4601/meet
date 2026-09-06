@@ -38,7 +38,7 @@ RUN npm ci --omit=dev && npm cache clean --force
 COPY --from=build /app/server/dist server/dist
 COPY --from=build /app/client/dist client/dist
 
-EXPOSE 3001
+EXPOSE 3001 3478/udp
 
 # Non-root user for security
 RUN addgroup -S app && adduser -S app -G app
