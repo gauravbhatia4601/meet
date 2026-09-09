@@ -246,6 +246,54 @@ fn window_pixel_size() -> (usize, usize) {
 /// value so diagnostics can tell the two cases apart).
 /// When `keep_raw` is true and probing succeeds, raw mode is left ENABLED so
 /// the video loop can read ACKs (and Ctrl+C bytes) — caller must disable it.
+/// Probe sixel support the standards way: DA1 (primary device attributes)
+/// lists capabilities semicolon-separated; "4" = DEC Sixel Graphics. Works
+/// for foot, contour, WezTerm, mintty, Konsole, Windows Terminal 1.22+.
+fn probe_sixel_support() -> bool {
+    use std::io::Write;
+    if crossterm::terminal::enable_raw_mode().is_err() {
+        return false;
+    }
+    print!("\x1b[c"); // DA1
+    let _ = std::io::stdout().flush();
+    let mut fd_vec = [libc::pollfd {
+        fd: 0,
+        events: libc::POLLIN,
+        revents: 0,
+    }];
+    let deadline = Instant::now() + Duration::from_millis(600);
+    let mut seen = String::new();
+    let mut answered = false;
+    while Instant::now() < deadline && !answered {
+        let left = deadline.saturating_duration_since(Instant::now());
+        let ms = left.as_millis() as i32;
+        let r = unsafe { libc::poll(fd_vec.as_mut_ptr(), 1, ms) };
+        if r <= 0 {
+            break;
+        }
+        let mut b = [0u8; 256];
+        let n = unsafe { libc::read(0, b.as_mut_ptr() as *mut libc::c_void, b.len()) };
+        if n <= 0 {
+            break;
+        }
+        seen.push_str(&String::from_utf8_lossy(&b[..n as usize]));
+        // DA1 response ends with 'c'
+        if seen.contains('c') {
+            answered = true;
+        }
+    }
+    let _ = crossterm::terminal::disable_raw_mode();
+    // parse "[?p1;p2;...c" → does any param equal "4"?
+    let body = seen
+        .split("\x1b[?")
+        .nth(1)
+        .unwrap_or("")
+        .split('c')
+        .next()
+        .unwrap_or("");
+    body.split(';').any(|p| p.trim() == "4")
+}
+
 fn probe_kitty_support(keep_raw: bool) -> (bool, bool) {
     use std::io::Write;
     if crossterm::terminal::enable_raw_mode().is_err() {
@@ -269,7 +317,7 @@ fn probe_kitty_support(keep_raw: bool) -> (bool, bool) {
     let mut seen = String::new();
     let mut saw_kitty_ack = false;
     let mut saw_da = false;
-    while Instant::now() < deadline && !saw_da {
+    while Instant::now() < deadline && !saw_kitty_ack && !saw_da {
         let left = deadline.saturating_duration_since(Instant::now());
         let ms = left.as_millis() as i32;
         let r = unsafe { libc::poll(fd_vec.as_mut_ptr(), 1, ms) };
@@ -284,6 +332,7 @@ fn probe_kitty_support(keep_raw: bool) -> (bool, bool) {
         seen.push_str(&String::from_utf8_lossy(&buf[..n as usize]));
         if seen.contains("\x1b_Gi=9") {
             saw_kitty_ack = true;
+            saw_da = true; // ACK wins — no need to wait for DA
             break;
         }
         if seen.contains('<') && seen.contains('>') {
@@ -587,6 +636,7 @@ fn compute_geometry(
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Format {
+    Auto,      // probe capabilities at runtime, pick the best renderer
     Kitty,     // kitty graphics — real pixels, memory-bounded, iTerm2 3.6+
     Sixel,     // sixel graphics (WezTerm/mlterm)
     Iterm,     // OSC-1337 inline (⚠️ iTerm2 leaks: gitlab #10420)
@@ -614,14 +664,8 @@ pub fn parse_format(s: &str) -> Format {
         "iterm" => Format::Iterm,
         "half" => Format::HalfBlock,
         "quad" => Format::Quadrant,
-        _ => {
-            let term_prog = std::env::var("TERM_PROGRAM").unwrap_or_default();
-            if term_prog.contains("iTerm") {
-                Format::Kitty
-            } else {
-                Format::Quadrant
-            }
-        }
+        // auto + unknown → capability probe at runtime (kitty → sixel → text)
+        _ => Format::Auto,
     }
 }
 
@@ -696,6 +740,24 @@ pub fn webcam_render(opts: VideoOpts) -> anyhow::Result<()> {
     // count and 720p alone ate 150-250ms/frame. Peers render us small anyway
     // (their tiles are ~480×360); pass --size 1280x720 for hi-res capture.
     let (req_w, req_h) = (req_w.min(640), req_h.min(480));
+
+    // ── Format::Auto: capability ladder, probed against the real terminal ──
+    // 1. kitty graphics query → kitty/Ghostty/WezTerm/iTerm2 3.6+
+    // 2. DA1 sixel capability → foot/contour/WezTerm/mintty/Konsole/WT 1.22+
+    // 3. ANSI quadrant text art → everything else (Termius, Alacritty, …)
+    if format == Format::Auto {
+        let (kitty_ok, _ack) = probe_kitty_support(false);
+        if kitty_ok {
+            format = Format::Kitty;
+            overlay_log("🎨 graphics: kitty protocol (probed)");
+        } else if probe_sixel_support() {
+            format = Format::Sixel;
+            overlay_log("🎨 graphics: sixel (probed via DA1)");
+        } else {
+            format = Format::Quadrant;
+            overlay_log("🎨 graphics: none probed — ANSI quadrant text mode");
+        }
+    }
 
     // Capability probe for kitty: confirmed terminals hold raw mode for the
     // ACK flow-control loop; without kitty we fall back silently to quadrant.
@@ -798,6 +860,7 @@ pub fn webcam_render(opts: VideoOpts) -> anyhow::Result<()> {
         .clamp(MIN_ENC_H, geom.max_enc_h.max(MIN_ENC_H));
 
     let mode_label = match format {
+        Format::Auto => "probing…", // resolved before this point
         Format::Kitty => "kitty graphics",
         Format::Sixel => "sixel",
         Format::Iterm => "iterm inline",
@@ -1122,6 +1185,7 @@ pub fn webcam_render(opts: VideoOpts) -> anyhow::Result<()> {
         }
 
         match format {
+            Format::Auto => unreachable!("resolved before the loop"),
             Format::Kitty => {
                 // Raw RGB + zlib → kitty APC. Same image id / placement id every
                 // frame → iTerm2 replaces in place (bounded memory, no flicker).
