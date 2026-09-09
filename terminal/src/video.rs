@@ -750,12 +750,15 @@ pub fn webcam_render(opts: VideoOpts) -> anyhow::Result<()> {
         if kitty_ok {
             format = Format::Kitty;
             overlay_log("🎨 graphics: kitty protocol (probed)");
+            eprintln!("  🎨 rendering: kitty graphics protocol");
         } else if probe_sixel_support() {
             format = Format::Sixel;
             overlay_log("🎨 graphics: sixel (probed via DA1)");
+            eprintln!("  🎨 rendering: sixel graphics");
         } else {
             format = Format::Quadrant;
             overlay_log("🎨 graphics: none probed — ANSI quadrant text mode");
+            eprintln!("  🎨 rendering: ANSI quadrant text (no image protocol probed)");
         }
     }
 
@@ -801,7 +804,7 @@ pub fn webcam_render(opts: VideoOpts) -> anyhow::Result<()> {
         // short retry loop rides that out, and each attempt releases on drop.
         overlay_log(&format!("Opening camera {} at {}x{}...", device, req_w, req_h));
         let mut camera = None;
-        for (w, h) in [(req_w, req_h), (640, 480)] {
+        'outer: for (w, h) in [(req_w, req_h), (640, 480)] {
             for attempt in 1..=3 {
                 match open_camera(device, w, h) {
                     Ok(c) => {
@@ -810,6 +813,18 @@ pub fn webcam_render(opts: VideoOpts) -> anyhow::Result<()> {
                     }
                     Err(e) => {
                         eprintln!("  camera {w}x{h} (attempt {attempt}/3) failed: {e}");
+                        // "Lock Rejected" = another session DEFINITIVELY holds
+                        // the camera — retrying a different resolution won't
+                        // help. Fail fast with instructions instead of
+                        // burning ~8s of retries.
+                        if e.to_string().contains("Lock Rejected") {
+                            eprintln!(
+                                "  → another app/session holds the camera (an \
+                                 uplink-terminal in another terminal?). Leave that \
+                                 call first ('q'), then retry here."
+                            );
+                            break 'outer;
+                        }
                         std::thread::sleep(Duration::from_millis(900));
                     }
                 }
