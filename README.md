@@ -40,11 +40,42 @@ npm run dev
 Open the client in **two browser tabs** (or two machines) and join the same
 meeting code to test video.
 
+## Terminal client (uplink-terminal)
+
+A WebRTC video-call client that renders the whole meeting inside a terminal —
+kitty-graphics pixel video, a full ratatui TUI (header, command pills, chat
+panel, named tiles), mic + speaker, chat.
+
+```bash
+cd terminal && cargo build --release
+ln -sf "$PWD/target/release/uplink-terminal" ~/.cargo/bin/uplink-terminal
+
+uplink-terminal join <code>          # defaults to wss://meet.heygauravbhatia.com
+uplink-terminal join <code> --server ws://localhost:4123   # local dev
+uplink-terminal new --name me        # create a room + join
+uplink-terminal join <code> --no-camera                    # receive-only
+```
+
+Keys: `c` camera · `m` mic · `t` chat · `y` copy code · `q` leave.
+Mouse works too — the buttons are clickable.
+
+### Terminal compatibility (auto-probed, no name matching)
+
+| Renderer | Probe | Terminals |
+|----------|-------|-----------|
+| Kitty graphics | image query + ACK | kitty, Ghostty, WezTerm, iTerm2 3.6+ |
+| Sixel | DA1 capability "4" | foot, contour, mintty, Konsole, Windows Terminal 1.22+ |
+| ANSI quadrant (2×2/cell) | — fallback | Termius, Alacritty, ssh, anything |
+
+Override with `--format kitty|sixel|iterm|quad|half`.
+
 ## Testing
 
 ```bash
-npm test          # runs the vitest suite (room codes, room manager, WebRTC)
-npm run typecheck # type-checks both workspaces
+bash scripts/check-all.sh   # 7 layers: services, 27 rust tests, loopback decode,
+                            # 2 headless-Chrome e2e flows, panic scan
+npm test                    # vitest suite (33 tests)
+npm run typecheck           # type-checks both workspaces
 ```
 
 The suite covers room-code normalization/validation, the server's room store
@@ -244,12 +275,16 @@ other participant (full mesh), which suits small-to-medium calls.
 
 ```
 uplink/
-├── Dockerfile
+├── Dockerfile                # client + server in ONE container (:3001, STUN :3478/udp)
 ├── docker-compose.yml
+├── scripts/                  # check-all.sh, e2e.js
+├── terminal/                 # Rust terminal client (see "Terminal client")
+│   └── src/                  # video.rs (renderers), rtc.rs, ui.rs, audio.rs, h264.rs…
 ├── server/
 │   └── src/
 │       ├── index.ts          # Express + Socket.io + signaling
-│       └── roomManager.ts    # In-memory room/participant store
+│       ├── stun.ts           # RFC 8489 binding-only STUN (UDP 3478)
+│       └── roomManager.ts    # Room/participant store
 └── client/
     └── src/
         ├── pages/            # Home, MeetingRoom
