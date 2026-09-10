@@ -2,7 +2,7 @@
 // Chrome publishes its fake camera → assert BOTH directions decode.
 // On probe freeze, auto-`sample` the wedged process for autopsy.
 const { spawn, execSync } = require('node:child_process');
-const { io } = require('/Users/gauravbhatia/meet-clone/node_modules/socket.io-client');
+const { io } = require('socket.io-client');
 const puppeteer = require('puppeteer-core');
 const fs = require('node:fs');
 
