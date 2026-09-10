@@ -9,7 +9,7 @@ const fs = require('node:fs');
 const RUN_SECS = 32;
   let camToggled = 0;
 const PROBE_PATH = '/tmp/uplink-decode-probe.log';
-const STATS_OUT = '/tmp/uplink-e2e-stats.json';
+const STATS_OUT = `/tmp/uplink-e2e-stats-${process.env.FLOW ?? 'default'}.json`;
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 const probeSnapshot = () => {
@@ -27,7 +27,10 @@ const probeSnapshot = () => {
   fs.rmSync(PROBE_PATH, { force: true });
   fs.rmSync(STATS_OUT, { force: true });
 
-  const holder = io('http://127.0.0.1:4123');
+  // The holder must create the room on the SAME signaling server the
+  // probe/browser use — E2E_SERVER (ws://host:port) → http origin.
+  const sigUrl = (process.env.E2E_SERVER ?? 'ws://localhost:4123').replace(/^ws(s?):\/\//, 'http$1://');
+  const holder = io(sigUrl);
   const room = await new Promise((resolve, reject) => {
     holder.on('connect', () => {
       holder.emit('create-room', (res) => {
@@ -44,7 +47,7 @@ const probeSnapshot = () => {
 
   const spawnProbe = () => spawn(
     '/Users/gauravbhatia/meet-clone/terminal/target/release/uplink-terminal',
-    ['decode-probe', room, '--name', 'Probe', '--server', 'ws://localhost:4123', '--secs', String(RUN_SECS + 10), '--fake-cam', '--toggle-cam-at', '12'],
+    ['decode-probe', room, '--name', 'Probe', '--server', process.env.E2E_SERVER ?? 'ws://localhost:4123', '--secs', String(RUN_SECS + 10), '--fake-cam', '--toggle-cam-at', '12'],
     { env: { ...process.env, UPLINK_WEBRTC_DEBUG: '1' } },
   );
   let probe;
@@ -87,7 +90,10 @@ const probeSnapshot = () => {
   page.on('console', (m) => logs.push(m.text()));
   page.on('pageerror', (e) => logs.push('PAGEERROR ' + e.message));
 
-  await page.goto(`http://localhost:5173/room/${room}`, { waitUntil: 'domcontentloaded' });
+  // E2E_BASE: dev vite (:5173) by default; check-all points at the
+  // production build served by the signaling server for deterministic runs.
+  const base = process.env.E2E_BASE ?? 'http://localhost:5173';
+  await page.goto(`${base}/room/${room}`, { waitUntil: 'domcontentloaded' });
   await page.waitForSelector('#gate-name', { timeout: 20000 });
   await page.type('#gate-name', 'ChromeBot');
   await page.waitForFunction(() => {
