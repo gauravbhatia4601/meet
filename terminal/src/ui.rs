@@ -517,7 +517,6 @@ pub fn paint_deck() {
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
             .border_style(Style::default().fg(border))
-            .style(Style::default().bg(Color::Rgb(10, 11, 14)))
             .title_top(h_left)
             .title_top(h_right)
             .title_bottom(Line::from(f_left.clone()))
@@ -601,7 +600,6 @@ pub fn paint_deck() {
                     ))
                     .alignment(ratatui::layout::Alignment::Right),
                 );
-            f.render_widget(Clear, sb);
             f.render_widget(&sb_block, sb);
             let sb_inner = sb_block.inner(sb);
 
