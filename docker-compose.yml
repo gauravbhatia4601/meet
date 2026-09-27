@@ -12,15 +12,28 @@
 # (camera/mic are only allowed in a secure context), which your proxy provides.
 
 services:
+  # Room-code persistence: without Redis, room records live in the app's
+  # memory and every redeploy wipes them ("Room not found" mid-call).
+  # Browsers + the terminal auto-reconnect and rejoin; the P2P media itself
+  # never drops. Redis on a volume keeps meeting codes alive across deploys.
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --save 60 1 --appendonly no
+    volumes:
+      - redis-data:/data
   app:
     build: .
     restart: unless-stopped
+    depends_on:
+      - redis
     ports:
       - "3001:3001"
       - "3478:3478/udp"
     environment:
       NODE_ENV: production
       PORT: 3001
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
       # Your public origin, e.g. https://meet.heygauravbhatia.com
       CLIENT_ORIGIN: ${CLIENT_ORIGIN:-https://meet.heygauravbhatia.com}
       # --- TURN relay (REQUIRED for reliable calls on the public internet) ---

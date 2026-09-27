@@ -353,9 +353,14 @@ pub fn paint_deck() {
     }
     let area = Rect { x: 0, y: 0, width: cols, height: rows };
 
-    // Fresh terminal each paint → the whole chrome re-asserts over the video.
+    // Kitty mode keeps a PERSISTENT terminal: images don't touch text cells,
+    // so the diff emits only real changes (timer digits ~1/s) — zero flicker.
+    // Text-art formats re-create every paint: the art overwrites cells, so
+    // chrome must fully re-assert (reset_terminal() also forces this).
+    let persistent = crate::video::current_format_is_image();
     let mut guard = TERMINAL.lock().unwrap_or_else(|e| e.into_inner());
-    {
+    let stale = LAST_AREA.lock().unwrap_or_else(|e| e.into_inner()).as_ref() != Some(&area);
+    if !persistent || stale || guard.is_none() {
         let term = Terminal::with_options(
             CrosstermBackend::new(std::io::stdout()),
             TerminalOptions {

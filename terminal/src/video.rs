@@ -190,6 +190,19 @@ pub fn latest_peer_info() -> Option<PeerInfo> {
     })
 }
 
+/// True when the active render format paints IMAGES (no cell overwrites) —
+/// the TUI can then keep a persistent diff terminal (zero chrome re-emission).
+/// Process-global: the render loop and the deck paint on different threads.
+static FORMAT_IS_IMAGE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn current_format_is_image() -> bool {
+    FORMAT_IS_IMAGE.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+pub fn set_format_is_image(v: bool) {
+    FORMAT_IS_IMAGE.store(v, std::sync::atomic::Ordering::SeqCst);
+}
+
 pub fn peer_present() -> bool {
     !fresh_peer_frames().is_empty()
 }
@@ -745,14 +758,17 @@ pub fn webcam_render(opts: VideoOpts) -> anyhow::Result<()> {
     // 1. kitty graphics query → kitty/Ghostty/WezTerm/iTerm2 3.6+
     // 2. DA1 sixel capability → foot/contour/WezTerm/mintty/Konsole/WT 1.22+
     // 3. ANSI quadrant text art → everything else (Termius, Alacritty, …)
+    set_format_is_image(matches!(format, Format::Kitty | Format::Iterm | Format::Sixel));
     if format == Format::Auto {
         let (kitty_ok, _ack) = probe_kitty_support(false);
         if kitty_ok {
             format = Format::Kitty;
+            set_format_is_image(true);
             overlay_log("🎨 graphics: kitty protocol (probed)");
             eprintln!("  🎨 rendering: kitty graphics protocol");
         } else if probe_sixel_support() {
             format = Format::Sixel;
+            set_format_is_image(true);
             overlay_log("🎨 graphics: sixel (probed via DA1)");
             eprintln!("  🎨 rendering: sixel graphics");
         } else {
@@ -924,6 +940,7 @@ pub fn webcam_render(opts: VideoOpts) -> anyhow::Result<()> {
     let mut win_frames = 0u32;
     let mut win_sum_ms = 0.0f64;
     let mut grow_streak = 0u32;
+    let mut shrink_streak = 0u32;
     let encode_quality: u8 = 80; // jpeg quality — iterm mode only
     let mut outq_streak: u32 = 0;
     // ── ACK-window flow control (kitty) ──────────────────────────────────
@@ -1284,6 +1301,16 @@ pub fn webcam_render(opts: VideoOpts) -> anyhow::Result<()> {
                 let avg = win_sum_ms / win_frames as f64;
                 let term_backlog = outq_streak >= WIN_FRAMES - 2;
                 if (avg > target_ms * 1.25 || term_backlog) && cur_w > MIN_ENC_W {
+                    // Hysteresis: require 2 consecutive slow windows before
+                    // shrinking. Without it the tuner oscillates sizes
+                    // (grow → slow → shrink → headroom → grow …) and every
+                    // step visibly rescales the kitty image = flicker.
+                    shrink_streak += 1;
+                    if shrink_streak < 2 && !term_backlog {
+                        // one more slow window before committing to a shrink
+                        win_frames = 0;
+                        win_sum_ms = 0.0;
+                    } else {
                     // Too slow (us) or terminal can't drain — shrink 20%
                     cur_w = (((cur_w as f32) * 0.8) as usize & !1).max(MIN_ENC_W);
                     cur_h = (((cur_w as f32 / geom.box_aspect).round() as usize) & !1)
@@ -1298,7 +1325,9 @@ pub fn webcam_render(opts: VideoOpts) -> anyhow::Result<()> {
                         ));
                     }
                     grow_streak = 0;
+                    shrink_streak = 0;
                     outq_streak = 0;
+                    }
                 } else if avg < target_ms * 0.55 {
                     // Plenty of headroom → try growing 12%
                     grow_streak += 1;
@@ -1318,9 +1347,11 @@ pub fn webcam_render(opts: VideoOpts) -> anyhow::Result<()> {
                             }
                         }
                         grow_streak = 0;
+                        shrink_streak = 0;
                     }
                 } else {
                     grow_streak = 0;
+                    shrink_streak = 0;
                 }
                 win_frames = 0;
                 win_sum_ms = 0.0;

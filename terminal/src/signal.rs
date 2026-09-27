@@ -188,6 +188,9 @@ fn start_video(video_cfg: Option<VideoOpts>) -> Result<()> {
 }
 
 fn spin_until_exit() -> Result<()> {
+    // No render loop runs here → nothing overwrites text cells → the deck
+    // can keep a persistent diff terminal (no per-paint re-emission).
+    crate::video::set_format_is_image(true);
     // Receive-only / probe sessions still get the full TUI: input thread +
     // deck, painted on a timer (there's no render loop to do it per frame).
     let _ = crossterm::terminal::enable_raw_mode();
