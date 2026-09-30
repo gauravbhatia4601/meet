@@ -247,7 +247,7 @@ with symmetric NATs (common on mobile/cellular), TURN is required.
 
 To make Uplink available to people:
 
-1. **Deploy** the Docker image on Coolify (or any host) — `docker compose up -d --build`.
+1. **Deploy** the Docker image on Coolify (or any host) — `docker compose up -d --build`. Coolify deploys the single-service `docker-compose.yml` (adding a second service breaks its "no service selected" auto-selection); for app+Redis on a plain VPS use `docker-compose.redis.yml`.
 2. **Point your domain** (e.g. `meet.heygauravbhatia.com`) at the container on port 4123 with HTTPS (Cloudflare proxy / nginx / Caddy). WebRTC requires HTTPS for camera/mic.
 3. **Set env vars** in Coolify: `CLIENT_ORIGIN` (your public URL), `REDIS_URL` (your Redis container), and the Cloudflare TURN credentials (`CLOUDFLARE_TURN_TOKEN_ID` / `CLOUDFLARE_TURN_API_TOKEN`).
 4. **Share links** — every meeting link (`/room/abc-defg-hij`) works for anyone with the code; no signup needed. The landing page has a share button (Web Share API, clipboard fallback).

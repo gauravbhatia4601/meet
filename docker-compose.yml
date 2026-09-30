@@ -10,41 +10,30 @@
 # SSL-protected by your existing proxy (Cloudflare / nginx / Caddy). Point that
 # proxy at this VPS on port 3001. WebRTC requires HTTPS in production
 # (camera/mic are only allowed in a secure context), which your proxy provides.
+#
+# NOTE: this file must stay SINGLE-SERVICE — Coolify deploys it directly and
+# aborts with "no service selected" when it finds more than one service.
+# Plain-VPS full stack (app + Redis for room-code persistence):
+# docker-compose.redis.yml. On Coolify: add a managed Redis service and set
+# REDIS_URL on this app.
 
 services:
-  # Room-code persistence: without Redis, room records live in the app's
-  # memory and every redeploy wipes them ("Room not found" mid-call).
-  # Browsers + the terminal auto-reconnect and rejoin; the P2P media itself
-  # never drops. Redis on a volume keeps meeting codes alive across deploys.
-  redis:
-    image: redis:7-alpine
-    restart: unless-stopped
-    command: redis-server --save 60 1 --appendonly no
-    volumes:
-      - redis-data:/data
   app:
     build: .
     restart: unless-stopped
-    depends_on:
-      - redis
     ports:
       - "3001:3001"
       - "3478:3478/udp"
     environment:
       NODE_ENV: production
       PORT: 3001
-      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
+      REDIS_URL: ${REDIS_URL:-}
       # Your public origin, e.g. https://meet.heygauravbhatia.com
       CLIENT_ORIGIN: ${CLIENT_ORIGIN:-https://meet.heygauravbhatia.com}
       # --- TURN relay (REQUIRED for reliable calls on the public internet) ---
-      # TURN/STUN URLs are fetched from the Cloudflare API on the fly, so no
-      # TURN URL variables are needed. Only set the Cloudflare credentials.
+      # TURN/STUN URLs are fetched from the Cloudflare API on the fly, so no TURN
+      # URL variables are needed. Only set the Cloudflare credentials below.
+      # Get these from https://dash.cloudflare.com -> Calls -> TURN.
       CLOUDFLARE_TURN_TOKEN_ID: ${CLOUDFLARE_TURN_TOKEN_ID:-}
       CLOUDFLARE_TURN_API_TOKEN: ${CLOUDFLARE_TURN_API_TOKEN:-}
       CLOUDFLARE_TURN_TTL: ${CLOUDFLARE_TURN_TTL:-86400}
-      # --- Room persistence (Redis) ---
-      # Point at your Redis instance (e.g. the Coolify redis container).
-      # When unset, rooms are in-memory only (no rejoin after empty/restart).
-      REDIS_URL: ${REDIS_URL:-}
-      # How long a meeting code stays valid after the last person leaves (sec).
-      ROOM_TTL_SECONDS: ${ROOM_TTL_SECONDS:-604800}
