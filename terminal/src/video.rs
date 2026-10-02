@@ -134,11 +134,16 @@ pub fn latest_camera_frame() -> Option<PublishFrame> {
 #[derive(Clone)]
 pub struct PeerFrame {
     pub ssrc: u64,
+    /// Socket id of the sending peer — one tile per peer even when a
+    /// renegotiation changes the ssrc.
+    pub peer: String,
     pub w: u32,
     pub h: u32,
     pub rgb: Arc<Vec<u8>>,
     pub at: Instant,
 }
+/// A peer whose video stalled keeps its tile as a camera-off card this long.
+const PEER_TILE_TTL: Duration = Duration::from_secs(60);
 
 /// Active peer frames, one slot per ssrc (up to 4 grid tiles).
 static PEER_FRAMES: std::sync::Mutex<Vec<PeerFrame>> = std::sync::Mutex::new(Vec::new());
@@ -146,22 +151,46 @@ static PEER_FRAMES: std::sync::Mutex<Vec<PeerFrame>> = std::sync::Mutex::new(Vec
 pub static PEER_FRAMES_TOTAL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 pub fn push_peer_frame(f: PeerFrame) {
-    let mut frames = PEER_FRAMES.lock().unwrap_or_else(|e| e.into_inner());
-    match frames.iter_mut().find(|p| p.ssrc == f.ssrc) {
-        Some(slot) => *slot = f,
-        None => {
-            if frames.len() < 4 {
-                frames.push(f);
-            }
+    {
+        let mut frames = PEER_FRAMES.lock().unwrap_or_else(|e| e.into_inner());
+        // One slot per peer (an ssrc change on renegotiation replaces the old).
+        frames.retain(|p| p.peer != f.peer && p.ssrc != f.ssrc);
+        if frames.len() < 4 {
+            frames.push(f);
         }
     }
     PEER_FRAMES_TOTAL.fetch_add(1, Ordering::SeqCst);
 }
 
+/// A peer left the room: drop its tile immediately (no lingering card).
+pub fn forget_peer_frames(peer: &str) {
+    PEER_FRAMES
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .retain(|f| f.peer != peer);
+}
+
 /// Fresh (< 1.5s) peer frames, newest first, up to 4.
+/// Does NOT prune the store: stale entries are what keep a stalled peer's
+/// tile alive as a card (see `active_peer_frames`).
 fn fresh_peer_frames() -> Vec<PeerFrame> {
+    let frames = PEER_FRAMES.lock().unwrap_or_else(|e| e.into_inner());
+    let mut v: Vec<PeerFrame> = frames
+        .iter()
+        .filter(|f| f.at.elapsed() < Duration::from_millis(1500))
+        .cloned()
+        .collect();
+    v.sort_by(|a, b| b.at.cmp(&a.at));
+    v.truncate(4);
+    v
+}
+
+/// Grid tiles: every peer seen within the TTL, newest first. Fresh entries are
+/// live video; older ones the compositor draws as camera-off cards so a peer
+/// never silently vanishes while still in the room.
+fn active_peer_frames() -> Vec<PeerFrame> {
     let mut frames = PEER_FRAMES.lock().unwrap_or_else(|e| e.into_inner());
-    frames.retain(|f| f.at.elapsed() < Duration::from_millis(1500));
+    frames.retain(|f| f.at.elapsed() < PEER_TILE_TTL);
     let mut v = frames.clone();
     v.sort_by(|a, b| b.at.cmp(&a.at));
     v.truncate(4);
@@ -1068,8 +1097,11 @@ pub fn webcam_render(opts: VideoOpts) -> anyhow::Result<()> {
         if small_buf.len() < need_full {
             small_buf.resize(need_full, 0);
         }
-        // ── Grid of tiles: [local] + up to 3 fresh peer streams ──────────
-        let peers = fresh_peer_frames();
+        // ── Grid of tiles: [local] + up to 3 peer slots ──────────────────
+        // Stale peers keep their tile as a camera-off card (phone suspension
+        // or camera-off stops RTP; silently collapsing the grid to the local
+        // tile made peers look like they left).
+        let peers = active_peer_frames();
         let n_peers = peers.len();
         let cam_renderable = crate::ui::camera_on();
         // Grid geometry (cols, rows) of tiles:
@@ -1174,16 +1206,22 @@ pub fn webcam_render(opts: VideoOpts) -> anyhow::Result<()> {
         }
 
         // Tile 0: local camera (or the cam-off card).
-        if !cam_renderable {
-            draw_cam_off(&mut small_buf_top, cell_w, cell_h);
-            let cstride = cell_w * 3;
-            for r in 0..cell_h {
-                let s = r * cstride;
-                let d = (oy + r) * stride + ox * 3;
-                if d + cstride <= small_buf.len() && s + cstride <= small_buf_top.len() {
-                    small_buf[d..d + cstride].copy_from_slice(&small_buf_top[s..s + cstride]);
+        macro_rules! off_card {
+            ($gx:expr, $gy:expr) => {{
+                draw_cam_off(&mut small_buf_top, cell_w, cell_h);
+                let cstride = cell_w * 3;
+                let (gx, gy) = ($gx, $gy);
+                for r in 0..cell_h {
+                    let s = r * cstride;
+                    let d = (oy + gy * cell_h + r) * stride + (ox + gx * cell_w) * 3;
+                    if d + cstride <= small_buf.len() && s + cstride <= small_buf_top.len() {
+                        small_buf[d..d + cstride].copy_from_slice(&small_buf_top[s..s + cstride]);
+                    }
                 }
-            }
+            }};
+        }
+        if !cam_renderable {
+            off_card!(0, 0);
         } else {
             blit!(raw, cam_w, cam_h, 0, 0, !keep_mirrored);
         }
@@ -1191,7 +1229,11 @@ pub fn webcam_render(opts: VideoOpts) -> anyhow::Result<()> {
         for (i, p) in peers.iter().enumerate() {
             let gx = (i + 1) % gcols;
             let gy = (i + 1) / gcols;
-            blit!(p.rgb.as_slice(), p.w as usize, p.h as usize, gx, gy, false);
+            if p.at.elapsed() < Duration::from_millis(1500) {
+                blit!(p.rgb.as_slice(), p.w as usize, p.h as usize, gx, gy, false);
+            } else {
+                off_card!(gx, gy);
+            }
         }
 
         // Separators between cells.
@@ -1558,5 +1600,40 @@ mod tests {
             Some((3, 5, 0))
         );
         assert_eq!(parse_iterm2_version("no version here"), None);
+    }
+
+    #[test]
+    fn peer_tiles_survive_frame_stalls() {
+        // A peer whose video stalls (phone suspension, camera off) must keep
+        // its tile alive as a card until it leaves — dropping it made peers
+        // look like they had left ("only the host remains").
+        let mk = |peer: &str, ssrc: u64, age_ms: u64| PeerFrame {
+            ssrc,
+            peer: peer.into(),
+            w: 2,
+            h: 2,
+            rgb: Arc::new(vec![0u8; 12]),
+            at: Instant::now() - Duration::from_millis(age_ms),
+        };
+        PEER_FRAMES.lock().unwrap_or_else(|e| e.into_inner()).clear();
+
+        push_peer_frame(mk("a", 1, 2500)); // stalled 2.5s
+        push_peer_frame(mk("b", 2, 0)); // live
+        let active = active_peer_frames();
+        assert_eq!(active.len(), 2, "stalled peer keeps its tile");
+        assert_eq!(active[0].peer, "b", "live tile orders first");
+        assert_eq!(fresh_peer_frames().len(), 1, "only b is live video");
+
+        // Renegotiation changes the ssrc: replaces the slot, never duplicates.
+        push_peer_frame(mk("a", 3, 0));
+        let active = active_peer_frames();
+        assert_eq!(active.len(), 2);
+        assert!(active.iter().any(|f| f.peer == "a" && f.ssrc == 3));
+
+        // Leaving forgets the tile immediately.
+        forget_peer_frames("a");
+        assert_eq!(active_peer_frames().len(), 1);
+        forget_peer_frames("b");
+        assert_eq!(active_peer_frames().len(), 0);
     }
 }

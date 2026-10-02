@@ -689,7 +689,11 @@ export default function MeetingRoom() {
       }
     };
     const onVisible = () => {
-      if (document.visibilityState === 'visible') void acquireWakeLock();
+      if (document.visibilityState === 'visible') {
+        void acquireWakeLock();
+        // Mobile suspension stopped the camera track; bring it back.
+        void reviveCameraIfDead();
+      }
     };
     document.addEventListener('visibilitychange', onVisible);
     void acquireWakeLock();
@@ -762,8 +766,31 @@ export default function MeetingRoom() {
     updateLocalMediaState({ micOn: true });
   }
 
+  // Suspension recovery: mobile browsers stop the camera track on pagehide
+  // (app switch / screen lock). enabled-flips cannot revive a dead track, so
+  // when the page returns and the camera is supposed to be on, re-acquire it
+  // and swap it into every peer connection.
+  async function reviveCameraIfDead() {
+    if (!cameraOnRef.current) return;
+    const stream = localStreamRef.current;
+    const t = stream?.getVideoTracks()[0];
+    if (t && t.readyState === 'live') return;
+    if (t) stream?.removeTrack(t);
+    const s = await getMedia(true, false);
+    const nt = s?.getVideoTracks()[0];
+    if (!nt) return;
+    stream?.addTrack(nt);
+    rtcRef.current?.replaceLocalTrack('video', nt);
+    setCameraOn(true);
+    updateLocalMediaState({ cameraOn: true });
+  }
+
   async function toggleCamera() {
-    const videoTrack = localStreamRef.current?.getVideoTracks()[0];
+    const existing = localStreamRef.current?.getVideoTracks()[0];
+    // A stopped track (mobile suspension) can't be re-enabled — treat it as
+    // absent so the acquire path below revives the camera.
+    const videoTrack = existing && existing.readyState !== 'ended' ? existing : null;
+    if (existing && !videoTrack) localStreamRef.current?.removeTrack(existing);
 
     // Standard toggle: flip track.enabled — the device STAYS open. (stop() +
     // re-acquire breaks on macOS: the terminal holds the camera for the call,
@@ -777,8 +804,8 @@ export default function MeetingRoom() {
       return;
     }
 
-    // No video track at all (joined without camera): acquire now, attach to
-    // the existing stream + senders.
+    // No live video track (joined without camera, or it was suspended):
+    // acquire now, attach to the existing stream + senders.
     const s = await getMedia(true, micOnRef.current);
     if (!s) {
       showToast('Camera unavailable — check permissions/devices');

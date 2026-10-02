@@ -46,10 +46,10 @@ lsof -i ":${E2E_PORT}" -sTCP:LISTEN >/dev/null 2>&1 \
   || { fail "e2e server :${E2E_PORT} — see /tmp/e2e-server.log"; RESULTS+=("e2e-server=FAIL"); }
 
 # 1. Unit tests
-info "1/4 Rust unit tests (27 expected)"
+info "1/4 Rust unit tests (28 expected)"
 cd "$ROOT/terminal"
-cargo test --release 2>&1 | grep -m1 "test result: ok. 27 passed" >/dev/null \
-  && { pass "unit tests 27/27"; RESULTS+=("unit=OK"); } \
+cargo test --release 2>&1 | grep -m1 "test result: ok. 28 passed" >/dev/null \
+  && { pass "unit tests 28/28"; RESULTS+=("unit=OK"); } \
   || { fail "unit tests"; RESULTS+=("unit=FAIL"); }
 
 # 2. In-process loopback (negotiation → H264 decode, no browser)

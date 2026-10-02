@@ -147,6 +147,14 @@ fn unregister_peer(id: &str) {
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .retain(|s| s != id);
+    // Peer left the room: its tile (live or camera-off card) goes with it,
+    // and the ssrc→peer mapping is dropped so a reused ssrc can't inherit
+    // the stale name.
+    crate::video::forget_peer_frames(id);
+    SSRC_PEER
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .retain(|(_, p)| p != id);
 }
 
 /// The WebRTC thread never calls socket.io directly: engineio's sync client
@@ -550,7 +558,7 @@ pub async fn build_pc(
                 "🎥 remote track ssrc={ssrc} codec={mime} — decoding…"
             ));
             if mime.contains("H264") {
-                tokio::spawn(decode_task(track.clone(), mime, ssrc));
+                tokio::spawn(decode_task(track.clone(), mime, ssrc, track_peer.clone()));
             } else if mime.contains("OPUS") {
                 // Inbound audio: decode → speakers (mic/speaker loopback echo
                 // caveat: use headphones, or mute the mic).
@@ -594,7 +602,7 @@ pub async fn build_pc(
 }
 
 /// The per-track decode loop: depacketize → openh264 → YUV→RGB → peer slot.
-async fn decode_task(track: Arc<TrackRemote>, mime: String, ssrc: u32) {
+async fn decode_task(track: Arc<TrackRemote>, mime: String, ssrc: u32, track_peer: String) {
     if !mime.contains("H264") {
         set_media("⚠️ browser sent a non-H264 codec — decode skipped");
         return;
@@ -653,6 +661,7 @@ async fn decode_task(track: Arc<TrackRemote>, mime: String, ssrc: u32) {
                             }
                             crate::video::push_peer_frame(crate::video::PeerFrame {
                                 ssrc: ssrc as u64,
+                                peer: track_peer.clone(),
                                 w: w as u32,
                                 h: h as u32,
                                 rgb: Arc::new(rgb),
