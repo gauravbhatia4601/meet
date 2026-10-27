@@ -192,7 +192,9 @@ fn active_peer_frames() -> Vec<PeerFrame> {
     let mut frames = PEER_FRAMES.lock().unwrap_or_else(|e| e.into_inner());
     frames.retain(|f| f.at.elapsed() < PEER_TILE_TTL);
     let mut v = frames.clone();
-    v.sort_by(|a, b| b.at.cmp(&a.at));
+    // Deterministic order: sorting by frame arrival swapped tile positions
+    // every frame with 2+ peers (labels + video jumping = flicker).
+    v.sort_by(|a, b| a.peer.cmp(&b.peer));
     v.truncate(4);
     v
 }
@@ -977,9 +979,17 @@ pub fn webcam_render(opts: VideoOpts) -> anyhow::Result<()> {
     // flight: when the terminal lags, we stop sending and let its ACKs pace
     // us. Auto-tune sees the stall as work time and shrinks the frame until
     // the terminal sustains the target fps.
-    const ACK_WINDOW: u64 = 3;
+    const ACK_WINDOW: u64 = 6;
     let (mut sent, mut acked) = (0u64, 0u64);
     let mut last_err: Option<String> = None;
+    // Dedupe: never paint an identical frame. A still scene therefore emits
+    // ZERO image updates (a per-update flash can't happen when nothing is sent).
+    let mut last_frame: Vec<u8> = Vec::new();
+    let mut last_dims: (usize, usize) = (0, 0);
+    // Double-buffer parity: alternate image/placement ids and delete the frame
+    // being retired, so a terminal that blanks a placement during replacement
+    // never shows a gap (the previous frame stays up until the new one lands).
+    let mut img_seq: u64 = 0;
 
     let pacing = Duration::from_nanos((1_000_000_000.0 / target_fps as f64) as u64);
 
@@ -1031,6 +1041,7 @@ pub fn webcam_render(opts: VideoOpts) -> anyhow::Result<()> {
                     print!("\x1b[2J\x1b[H");
                     let _ = std::io::stdout().flush();
                     crate::ui::reset_terminal();
+                    last_frame.clear(); // screen wiped — repaint even if identical
                     win_frames = 0;
                     win_sum_ms = 0.0;
                     outq_streak = 0;
@@ -1056,7 +1067,7 @@ pub fn webcam_render(opts: VideoOpts) -> anyhow::Result<()> {
         if camera.is_none() {
             // Fake camera: drifting color wash + moving stripes, mirrored
             // corner marker so motion is obvious.
-            let t = tick.elapsed().as_secs_f32();
+            let t = start.elapsed().as_secs_f32();
             let mut buf = vec![0u8; cam_w * cam_h * 3];
             for y in 0..cam_h {
                 for x in 0..cam_w {
@@ -1258,12 +1269,25 @@ pub fn webcam_render(opts: VideoOpts) -> anyhow::Result<()> {
             }
         }
 
+        // Paint only when the composed frame actually changed. Re-sending an
+        // identical image at the frame rate is pure churn (and every sent
+        // frame is a chance for the terminal to flash).
+        let frame_len = cur_w * cur_h * 3;
+        let changed =
+            last_dims != (cur_w, cur_h) || last_frame.as_slice() != &small_buf[..frame_len];
+        if changed {
         match format {
             Format::Auto => unreachable!("resolved before the loop"),
             Format::Kitty => {
-                // Raw RGB + zlib → kitty APC. Same image id / placement id every
-                // frame → iTerm2 replaces in place (bounded memory, no flicker).
-                // Placed inside the frame: row 2, col 2, geom.cols × avail cells.
+                // Raw RGB + zlib → kitty APC, placed inside the frame at row 2,
+                // col 2. Double-buffered: ids alternate 1/2 and the newest
+                // carries a rising z, drawn on top of the other buffer. While a
+                // terminal replaces one image it can never show a gap — the
+                // previous frame is still on screen underneath.
+                let id = 1 + (img_seq % 2) as u32;
+                kitty_enc.img_id = id;
+                kitty_enc.placement_id = id;
+                kitty_enc.z = (img_seq & 0x3FFF_FFFF) as i32;
                 kitty_enc.encode_into(
                     &small_buf,
                     cur_w,
@@ -1302,6 +1326,11 @@ pub fn webcam_render(opts: VideoOpts) -> anyhow::Result<()> {
             }
         }
         std::io::stdout().flush()?;
+        last_dims = (cur_w, cur_h);
+        last_frame.clear();
+        last_frame.extend_from_slice(&small_buf[..frame_len]);
+        img_seq = img_seq.wrapping_add(1);
+        }
 
         frame_count += 1;
         let work_ms = tick.elapsed().as_secs_f64() * 1000.0;
@@ -1621,7 +1650,7 @@ mod tests {
         push_peer_frame(mk("b", 2, 0)); // live
         let active = active_peer_frames();
         assert_eq!(active.len(), 2, "stalled peer keeps its tile");
-        assert_eq!(active[0].peer, "b", "live tile orders first");
+        assert_eq!(active[0].peer, "a", "tile order is deterministic (peer id)");
         assert_eq!(fresh_peer_frames().len(), 1, "only b is live video");
 
         // Renegotiation changes the ssrc: replaces the slot, never duplicates.

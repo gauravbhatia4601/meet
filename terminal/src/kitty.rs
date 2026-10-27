@@ -39,6 +39,9 @@ pub struct KittyEnc {
     /// placement id; with p omitted every frame APPENDS another stacked
     /// placement of the same image and the renderer drowns in overlap.
     pub placement_id: u32,
+    /// Placement z-index. Video double-buffers two image ids; a rising z keeps
+    /// the newest frame above the previous one until it is deleted.
+    pub z: i32,
     /// true = zlib-compress the frame (`o=z`). Raw f=24 is faster to encode
     /// and is the exact shape proven working in iTerm2; keep this off unless
     /// PTY bandwidth becomes the bottleneck.
@@ -55,8 +58,18 @@ impl KittyEnc {
             quiet: 1,
             img_id: 1,
             placement_id: 0,
+            z: 0,
             compress: false,
         }
+    }
+
+    /// Retire one buffered frame after the replacement is on screen: no flicker
+    /// even if the terminal blanks a placement while its image is replaced.
+    pub fn delete_image_into(id: u32, out: &mut Vec<u8>) {
+        out.clear();
+        out.extend_from_slice(b"\x1b_Ga=d,d=i,i=");
+        out.extend_from_slice(id.to_string().as_bytes());
+        out.extend_from_slice(b",q=2\x1b\\");
     }
 
     /// Set response verbosity: 1 = failures only (default), 0 = verbose, 2 = silent.
@@ -134,6 +147,9 @@ impl KittyEnc {
                     self.header_cache
                         .push_str(&format!(",p={}", self.placement_id));
                 }
+                if self.z != 0 {
+                    self.header_cache.push_str(&format!(",z={}", self.z));
+                }
                 self.header_cache.push_str(",q=");
                 self.header_cache.push_str(&self.quiet.to_string());
                 self.header_cache.push_str(",c=");
@@ -170,6 +186,13 @@ impl Default for KittyEnc {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_delete_image_command() {
+        let mut out = Vec::new();
+        KittyEnc::delete_image_into(2, &mut out);
+        assert_eq!(out, b"\x1b_Ga=d,d=i,i=2,q=2\x1b\\");
+    }
 
     #[test]
     fn test_kitty_structure_single_chunk_is_m0() {
